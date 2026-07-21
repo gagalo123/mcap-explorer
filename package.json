@@ -1,0 +1,119 @@
+{
+  "name": "mcap-explorer",
+  "displayName": "MCAP Explorer",
+  "description": "Explore MCAP robotics log files in VS Code: topics, schemas, statistics, metadata and attachments — instant summary even for multi-GB files, local or over Remote SSH.",
+  "version": "0.1.0",
+  "publisher": "gagalo123",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gagalo123/mcap-explorer.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "mcap",
+    "robotics",
+    "ros",
+    "ros2",
+    "foxglove",
+    "log"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In untrusted workspaces the OOM/scan safety limits are taken from user settings only.",
+      "restrictedConfigurations": [
+        "mcapExplorer.maxChunkUncompressedSize",
+        "mcapExplorer.unindexedScanConfirmSize"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "MCAP Explorer requires random file access; only file:// URIs are supported."
+    }
+  },
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "mcapExplorer.viewer",
+        "displayName": "MCAP Explorer",
+        "selector": [
+          {
+            "filenamePattern": "*.mcap"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "mcapExplorer.showInfo",
+        "title": "MCAP: Show Info"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "mcapExplorer.showInfo",
+          "when": "resourceExtname == .mcap",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mcapExplorer.showInfo"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "MCAP Explorer",
+      "properties": {
+        "mcapExplorer.maxChunkUncompressedSize": {
+          "type": "number",
+          "default": 268435456,
+          "description": "Refuse to decompress chunks whose uncompressed size exceeds this many bytes (OOM guard)."
+        },
+        "mcapExplorer.unindexedScanConfirmSize": {
+          "type": "number",
+          "default": 209715200,
+          "description": "Ask for confirmation before fully scanning unindexed files larger than this many bytes."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.mjs --production",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "build": "node esbuild.mjs --production && npm run typecheck",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json",
+    "test": "vitest run",
+    "smoke": "esbuild test/manual/smoke.ts --bundle --platform=node --target=node20 --format=cjs --loader:.wasm=file --asset-names=[name] --outdir=dist-smoke --log-level=error && node dist-smoke/smoke.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@mcap/core": "^2.2.1",
+    "@mcap/nodejs": "^1.1.0",
+    "@mcap/support": "^1.1.0",
+    "preact": "^10.29.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,14 @@
+.github/**
+.vscode/**
+.vscode-test/**
+src/**
+test/**
+docs/**
+dist-smoke/**
+node_modules/**
+esbuild.mjs
+tsconfig.json
+tsconfig.webview.json
+vitest.config.ts
+**/*.map
+.gitignore

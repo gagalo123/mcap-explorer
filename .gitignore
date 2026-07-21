@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-smoke/
+out/
+*.vsix
+.vscode-test/
+coverage/
+*.log
