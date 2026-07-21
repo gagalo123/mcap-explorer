@@ -29,7 +29,8 @@ Safety rails:
 ## Install
 
 - Marketplace / Open VSX: search for **MCAP Explorer** (`gagalo123.mcap-explorer`).
-- From source: `npm ci && npm run build && npx @vscode/vsce package --no-dependencies`, then install the generated `.vsix` via *Extensions: Install from VSIX…*
+- Build a `.vsix` from source: `npm ci && npm run vsix` → produces `mcap-explorer.vsix`; install it via *Extensions: Install from VSIX…* (or `code --install-extension mcap-explorer.vsix`).
+- One-step local install (requires the `code` CLI on PATH): `npm run install-local` builds the vsix and installs it into VS Code.
 
 ## Roadmap
 

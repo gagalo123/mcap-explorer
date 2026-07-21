@@ -101,7 +101,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.webview.json",
     "test": "vitest run",
     "smoke": "esbuild test/manual/smoke.ts --bundle --platform=node --target=node20 --format=cjs --loader:.wasm=file --asset-names=[name] --outdir=dist-smoke --log-level=error && node dist-smoke/smoke.js",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package --no-dependencies",
+    "vsix": "npm run build && vsce package --no-dependencies --out mcap-explorer.vsix",
+    "install-local": "npm run vsix && code --install-extension mcap-explorer.vsix --force"
   },
   "dependencies": {
     "@foxglove/rosmsg": "^5.0.5",
