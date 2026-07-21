@@ -1,13 +1,24 @@
+import { jsonDecoderFactory } from "./json";
+import { protobufDecoderFactory } from "./protobuf";
 import { rawDecoderFactory } from "./raw";
+import { ros1DecoderFactory } from "./ros1";
+import { ros2DecoderFactory } from "./ros2";
 import type { ChannelDecoder, ChannelInfo, DecoderFactory, SchemaInfo } from "./types";
 
 /**
- * Picks the highest-scoring factory for a channel. Phase 1 registers only the
- * raw fallback; protobuf/ros1/cdr/json factories plug in here in Phase 2
- * without touching callers.
+ * Picks the highest-scoring factory for a channel. The raw hex fallback wins at
+ * score 1; json/protobuf/ros1/ros2 score 10 when they match. Each factory's
+ * heavy dependencies load lazily inside its create(), so importing the factory
+ * objects here does not pull protobufjs/rosmsg into extension activation.
  */
 export class DecoderRegistry {
-  #factories: DecoderFactory[] = [rawDecoderFactory];
+  #factories: DecoderFactory[] = [
+    rawDecoderFactory,
+    jsonDecoderFactory,
+    protobufDecoderFactory,
+    ros1DecoderFactory,
+    ros2DecoderFactory,
+  ];
 
   register(factory: DecoderFactory): void {
     this.#factories.push(factory);

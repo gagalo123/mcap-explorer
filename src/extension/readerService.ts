@@ -1,11 +1,15 @@
 import { hasMcapPrefix, McapIndexedReader, McapStreamReader, Opcode } from "@mcap/core";
 import type { DecompressHandlers, IReadable, TypedMcapRecords } from "@mcap/core";
 
+import { DecoderRegistry } from "./decoders/registry";
+import type { ChannelDecoder } from "./decoders/types";
 import { McapExplorerError } from "./errors";
 import type {
   AttachmentIndexDto,
   ChannelDto,
   ChunksDto,
+  MessageDto,
+  MessagePageDto,
   MetadataDto,
   SchemaDto,
   SchemaSourceDto,
@@ -13,7 +17,8 @@ import type {
   SummaryDto,
   TimeRangeDto,
 } from "../shared/dto";
-import { durationBetween, frequencyHz, toTimeNs } from "../shared/time";
+import { durationBetween, frequencyHz, fromTimeNs, toTimeNs } from "../shared/time";
+import type { TimeNs } from "../shared/time";
 
 type Schema = TypedMcapRecords["Schema"];
 type Channel = TypedMcapRecords["Channel"];
@@ -29,6 +34,16 @@ export interface SessionOptions {
 export interface ScanProgress {
   loadedBytes: number;
   totalBytes: number;
+}
+
+export interface QueryMessagesOptions {
+  topics: string[];
+  start?: TimeNs;
+  end?: TimeNs;
+  reverse?: boolean;
+  cursor?: string;
+  limitCount: number;
+  limitBytes: number;
 }
 
 const SCAN_WINDOW_BYTES = 4 * 1024 * 1024;
@@ -56,6 +71,9 @@ export class McapFileSession {
   /** In-flight scan shared across panels so a file is never scanned twice. */
   #scanPromise: Promise<SummaryDto> | undefined;
   #scanProgressListeners = new Set<(progress: ScanProgress) => void>();
+  #registry = new DecoderRegistry();
+  /** Per-channel decoder cache (built lazily on first message of a channel). */
+  #decoderCache = new Map<number, ChannelDecoder>();
 
   private constructor(
     readable: IReadable,
@@ -418,6 +436,172 @@ export class McapFileSession {
     }
     return Number(written);
   }
+
+  /**
+   * Reads one page of decoded messages for the given topics via index-based
+   * random access (only chunks containing those topics are decompressed).
+   * Paginates by count or approximate DTO byte size, whichever comes first,
+   * and returns an opaque cursor to continue. Requires an indexed file.
+   */
+  async queryMessages(
+    opts: QueryMessagesOptions,
+    signal?: AbortSignal,
+  ): Promise<MessagePageDto> {
+    const reader = this.#reader;
+    if (!reader) {
+      throw new McapExplorerError("NO_INDEX", "Message browsing requires an indexed file.");
+    }
+
+    const channelIds = new Set<number>();
+    for (const channel of reader.channelsById.values()) {
+      if (opts.topics.length === 0 || opts.topics.includes(channel.topic)) {
+        channelIds.add(channel.id);
+      }
+    }
+
+    const reverse = opts.reverse ?? false;
+    let startTime = opts.start !== undefined ? fromTimeNs(opts.start) : undefined;
+    let endTime = opts.end !== undefined ? fromTimeNs(opts.end) : undefined;
+
+    // Cursor continuation: resume from the last message of the previous page.
+    let cursorTime: bigint | undefined;
+    let cursorSeq: number | undefined;
+    if (opts.cursor) {
+      const sep = opts.cursor.lastIndexOf(":");
+      cursorTime = BigInt(opts.cursor.slice(0, sep));
+      cursorSeq = Number(opts.cursor.slice(sep + 1));
+      if (reverse) {
+        endTime = cursorTime;
+      } else {
+        startTime = cursorTime;
+      }
+    }
+
+    // OOM guard: refuse if any chunk we would decompress inflates past the limit.
+    const chunkLimit = BigInt(this.#opts.maxChunkUncompressedSize);
+    for (const chunk of reader.chunkIndexes) {
+      if (startTime !== undefined && chunk.messageEndTime < startTime) {
+        continue;
+      }
+      if (endTime !== undefined && chunk.messageStartTime > endTime) {
+        continue;
+      }
+      let relevant = channelIds.size === 0;
+      for (const id of channelIds) {
+        if (chunk.messageIndexOffsets.has(id)) {
+          relevant = true;
+          break;
+        }
+      }
+      if (relevant && chunk.uncompressedSize > chunkLimit) {
+        throw new McapExplorerError(
+          "CHUNK_TOO_LARGE",
+          `A chunk in this range inflates to ${chunk.uncompressedSize} bytes, above the ` +
+            `configured limit of ${this.#opts.maxChunkUncompressedSize}.`,
+        );
+      }
+    }
+
+    const messages: MessageDto[] = [];
+    let approxBytes = 0;
+    let nextCursor: string | undefined;
+    let reachedEnd = true;
+
+    const iterator = reader.readMessages({
+      topics: opts.topics.length > 0 ? opts.topics : undefined,
+      startTime,
+      endTime,
+      reverse,
+    });
+
+    for await (const msg of iterator) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Message query cancelled.");
+      }
+      // Skip the boundary message(s) already delivered on the previous page.
+      if (cursorTime !== undefined && cursorSeq !== undefined && msg.logTime === cursorTime) {
+        if (!reverse && msg.sequence <= cursorSeq) {
+          continue;
+        }
+        if (reverse && msg.sequence >= cursorSeq) {
+          continue;
+        }
+      }
+
+      if (messages.length >= opts.limitCount || approxBytes >= opts.limitBytes) {
+        reachedEnd = false; // at least one more message exists beyond this page
+        break;
+      }
+
+      const dto = await this.#decodeMessage(
+        msg.channelId,
+        msg.sequence,
+        msg.logTime,
+        msg.publishTime,
+        msg.data,
+      );
+      messages.push(dto);
+      approxBytes += estimateDtoBytes(dto);
+      nextCursor = `${dto.logTime}:${dto.sequence}`;
+    }
+
+    return { messages, nextCursor: reachedEnd ? undefined : nextCursor, reachedEnd };
+  }
+
+  async #decodeMessage(
+    channelId: number,
+    sequence: number,
+    logTime: bigint,
+    publishTime: bigint,
+    data: Uint8Array,
+  ): Promise<MessageDto> {
+    const reader = this.#reader!;
+    const channel = reader.channelsById.get(channelId);
+    const base = {
+      channelId,
+      topic: channel?.topic ?? `(channel ${channelId})`,
+      sequence,
+      logTime: toTimeNs(logTime),
+      publishTime: toTimeNs(publishTime),
+      sizeBytes: data.byteLength,
+    };
+
+    let decoder = this.#decoderCache.get(channelId);
+    if (!decoder) {
+      const channelInfo = {
+        id: channelId,
+        topic: base.topic,
+        messageEncoding: channel?.messageEncoding ?? "",
+      };
+      const schemaRecord = channel ? reader.schemasById.get(channel.schemaId) : undefined;
+      const schemaInfo = schemaRecord
+        ? {
+            id: schemaRecord.id,
+            name: schemaRecord.name,
+            encoding: schemaRecord.encoding,
+            data: schemaRecord.data,
+          }
+        : undefined;
+      decoder = await this.#registry.resolve(channelInfo, schemaInfo);
+      this.#decoderCache.set(channelId, decoder);
+    }
+
+    try {
+      return { ...base, decoder: decoder.id, value: decoder.decode(data) };
+    } catch (err) {
+      return {
+        ...base,
+        decoder: decoder.id,
+        decodeError: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+}
+
+/** Rough JSON-size estimate for pagination (avoids full stringify per field). */
+function estimateDtoBytes(dto: MessageDto): number {
+  const valueSize = dto.value !== undefined ? JSON.stringify(dto.value).length : 0;
+  return valueSize + 128;
 }
 
 function buildIndexedSummary(reader: McapIndexedReader, opts: SessionOptions): SummaryDto {

@@ -29,3 +29,19 @@ Reference file used for v0.1: 2.7 GB CyberCap recording (h265 CompressedVideo ×
 - [ ] Unindexed file scan: progress advances, Cancel stops it promptly.
 - [ ] File currently being recorded (footer not yet written) → no crash; unindexed fallback.
 - [ ] Three different files open simultaneously → each shows its own data; closing releases file handles (`lsof | grep mcap`).
+
+## Message browsing (Phase 2)
+
+Automated portions verified via `npm run smoke -- <file> <topic>` against the 2.7 GB reference file:
+
+- [x] `/imu/front` (json) → decoded `sensor_msgs/Imu` tree (header / angular_velocity / linear_acceleration); `json` decoder.
+- [x] `/camera/front/image_raw/compressed` (protobuf `foxglove.CompressedVideo`) → timestamp (int64 → string) and frame_id decoded; `data` is a bytes node (length + hex preview, Annex-B `00 00 00 01` start code), **raw video bytes never cross to the webview**.
+- [x] Each query reads ~1 MiB (index-based random access, not a full scan of the 2.7 GB file).
+
+Editor (F5) checks:
+
+- [ ] Click a channel row → message list opens; scrolling loads further pages (cursor pagination).
+- [ ] Selecting a row shows its decoded JSON tree; objects/arrays collapse; bytes show length + hex.
+- [ ] Back button returns to the summary; reopening the tab restores the view.
+- [ ] A small ROS 2 (`cdr`) file decodes via the `ros2` decoder.
+- [ ] Light/dark theme legible in the list and tree.

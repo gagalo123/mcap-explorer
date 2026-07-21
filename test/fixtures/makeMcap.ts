@@ -1,4 +1,8 @@
 import { McapWriter, TempBuffer } from "@mcap/core";
+import protobuf from "protobufjs";
+import descriptor from "protobufjs/ext/descriptor";
+import { parse } from "@foxglove/rosmsg";
+import { MessageWriter as Ros2Writer } from "@foxglove/rosmsg2-serialization";
 
 export interface FixtureOptions {
   indexed?: boolean;
@@ -167,4 +171,108 @@ export function makePatternedBytes(length: number): Uint8Array {
 
 export function truncate(bytes: Uint8Array, keepFraction: number): Uint8Array {
   return bytes.slice(0, Math.floor(bytes.length * keepFraction));
+}
+
+const enc = (s: string) => new TextEncoder().encode(s);
+
+/**
+ * An indexed MCAP with one channel per real wire format (json / protobuf /
+ * ros2-cdr), each with `count` messages sharing timestamps. Used to test the
+ * full decode path end-to-end through queryMessages.
+ */
+export async function makeDecodableMcap(count = 5): Promise<Uint8Array> {
+  const buffer = new TempBuffer();
+  const writer = new McapWriter({
+    writable: buffer,
+    useChunks: true,
+    useStatistics: true,
+    useChunkIndex: true,
+    useMessageIndex: true,
+    useSummaryOffsets: true,
+    useAttachmentIndex: true,
+    useMetadataIndex: true,
+    repeatSchemas: true,
+    repeatChannels: true,
+    chunkSize: 4 * 1024,
+  });
+  await writer.start({ profile: "", library: "mcap-explorer-fixtures" });
+
+  const jsonSchema = await writer.registerSchema({
+    name: "demo.Json",
+    encoding: "jsonschema",
+    data: enc("{}"),
+  });
+  const jsonCh = await writer.registerChannel({
+    topic: "/json",
+    schemaId: jsonSchema,
+    messageEncoding: "json",
+    metadata: new Map(),
+  });
+
+  const root = protobuf.Root.fromJSON({
+    nested: {
+      demo: {
+        nested: {
+          Msg: {
+            fields: { id: { type: "int64", id: 1 }, note: { type: "string", id: 2 } },
+          },
+        },
+      },
+    },
+  });
+  const Msg = root.lookupType("demo.Msg");
+  const fds = descriptor.FileDescriptorSet.encode(root.toDescriptor("proto3")).finish();
+  const pbSchema = await writer.registerSchema({
+    name: "demo.Msg",
+    encoding: "protobuf",
+    data: new Uint8Array(fds),
+  });
+  const pbCh = await writer.registerChannel({
+    topic: "/protobuf",
+    schemaId: pbSchema,
+    messageEncoding: "protobuf",
+    metadata: new Map(),
+  });
+
+  const rosDef = "int32 x\nstring label";
+  const ros2Writer = new Ros2Writer(parse(rosDef, { ros2: true }));
+  const rosSchema = await writer.registerSchema({
+    name: "demo/Ros",
+    encoding: "ros2msg",
+    data: enc(rosDef),
+  });
+  const rosCh = await writer.registerChannel({
+    topic: "/ros2",
+    schemaId: rosSchema,
+    messageEncoding: "cdr",
+    metadata: new Map(),
+  });
+
+  for (let i = 0; i < count; i++) {
+    const t = FIXTURE_START_TIME + BigInt(i) * FIXTURE_MESSAGE_INTERVAL;
+    await writer.addMessage({
+      channelId: jsonCh,
+      sequence: i,
+      logTime: t,
+      publishTime: t,
+      data: enc(JSON.stringify({ value: i })),
+    });
+    await writer.addMessage({
+      channelId: pbCh,
+      sequence: i,
+      logTime: t,
+      publishTime: t,
+      data: new Uint8Array(Msg.encode(Msg.create({ id: 1000 + i, note: `n${i}` })).finish()),
+    });
+    await writer.addMessage({
+      channelId: rosCh,
+      sequence: i,
+      logTime: t,
+      publishTime: t,
+      data: ros2Writer.writeMessage({ x: i, label: `r${i}` }),
+    });
+  }
+
+  await writer.end();
+  return buffer.get();
 }

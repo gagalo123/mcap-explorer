@@ -7,6 +7,16 @@ described in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+
+- Message browsing: click a channel in the summary to page through its messages
+  in a virtualized list and inspect each decoded message as a collapsible JSON
+  tree.
+- Message decoders for JSON, Protobuf (binary FileDescriptorSet schemas), ROS 1
+  (`ros1msg`) and ROS 2 (`cdr` / `ros2msg`); unsupported encodings fall back to a
+  raw hex view. int64/uint64 render as strings and binary fields as bytes nodes
+  (length + hex preview), so raw payloads never reach the webview.
+
 ## [0.2.0]
 
 Initial public release.

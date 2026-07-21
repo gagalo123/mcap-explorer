@@ -49,6 +49,28 @@ async function main(): Promise<void> {
   );
   console.log(`json serializable : ${JSON.stringify(summary).length} chars`);
 
+  // Optional: browse the first messages of a topic to validate decoding.
+  const topic = process.argv[3];
+  if (topic) {
+    const before = metered.bytesRead;
+    const page = await session.queryMessages({
+      topics: [topic],
+      limitCount: 5,
+      limitBytes: 1_000_000,
+    });
+    console.log(`\n--- first ${page.messages.length} message(s) of ${topic} ---`);
+    for (const m of page.messages) {
+      const summ = m.decodeError
+        ? `DECODE ERROR: ${m.decodeError}`
+        : JSON.stringify(m.value).slice(0, 240);
+      console.log(`#${m.sequence} [${m.decoder}] ${m.sizeBytes}B  ${summ}`);
+    }
+    console.log(`reachedEnd=${page.reachedEnd} nextCursor=${page.nextCursor ?? "(none)"}`);
+    console.log(
+      `bytes read for this query: +${((metered.bytesRead - before) / 1024).toFixed(1)} KiB`,
+    );
+  }
+
   await handle.close();
 }
 

@@ -116,3 +116,26 @@ export type DecodedValue =
   | { type: "bytes"; length: number; previewHex: string }
   | DecodedValue[]
   | { [key: string]: DecodedValue };
+
+/** One message from a channel, decoded (Phase 2). */
+export interface MessageDto {
+  channelId: number;
+  topic: string;
+  sequence: number;
+  logTime: TimeNs;
+  publishTime: TimeNs;
+  sizeBytes: number;
+  /** Which decoder produced `value`: "json" | "protobuf" | "ros1" | "ros2" | "raw". */
+  decoder: string;
+  /** Decoded tree; absent when decoding failed (see decodeError). */
+  value?: DecodedValue;
+  /** Set when this single message failed to decode; the page still returns. */
+  decodeError?: string;
+}
+
+export interface MessagePageDto {
+  messages: MessageDto[];
+  /** Opaque cursor to fetch the next page; absent when reachedEnd. */
+  nextCursor?: string;
+  reachedEnd: boolean;
+}
