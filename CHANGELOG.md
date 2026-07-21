@@ -1,11 +1,25 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+All notable changes to this project are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
+[SemVer](https://semver.org) with the Marketplace odd/even-minor convention
+described in [RELEASING.md](RELEASING.md).
 
-Initial release.
+## [Unreleased]
 
-- Custom read-only editor for `.mcap` files: file facts, channels table (sortable), schemas with lazy source view, metadata records, attachments with streaming Save As.
-- Index-only reads: multi-GB files open instantly; message payloads are never scanned for the summary.
-- Unindexed-file fallback: explicit cancellable full scan with progress; truncated files handled gracefully.
+## [0.1.0]
+
+Initial preview release (pre-release channel — see RELEASING.md).
+
+### Added
+
+- Custom read-only editor for `.mcap` files: file facts, sortable channels
+  table, lazy schema source view, metadata records, and attachments with
+  streaming Save As.
+- Index-only reads: multi-GB files open instantly; message payloads are never
+  scanned for the summary.
+- Unindexed-file fallback: explicit, cancellable full scan with progress;
+  truncated files are handled gracefully.
 - `MCAP: Show Info` command (explorer context menu + command palette).
-- zstd / lz4 / bz2 chunk compression supported.
+- zstd / lz4 / bz2 chunk compression support.
+- Extension icon.

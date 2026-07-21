@@ -1,0 +1,80 @@
+name: Release
+
+# Publishing is driven entirely by version tags. To cut a release:
+#   npm version <patch|minor|major>   # bumps package.json + creates a v* tag
+#   git push --follow-tags
+# See RELEASING.md for the versioning convention (odd minor = pre-release).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write # required to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "tag=$TAG_VERSION package.json=$PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Determine release channel
+        id: channel
+        # Marketplace has no semver pre-release tags; the convention is
+        # odd minor = pre-release, even minor = stable.
+        run: |
+          MINOR="$(node -p "require('./package.json').version.split('.')[1]")"
+          if [ $((MINOR % 2)) -eq 1 ]; then
+            echo "pre_release=true" >> "$GITHUB_OUTPUT"
+            echo "flag=--pre-release" >> "$GITHUB_OUTPUT"
+            echo "Channel: pre-release (odd minor $MINOR)"
+          else
+            echo "pre_release=false" >> "$GITHUB_OUTPUT"
+            echo "flag=" >> "$GITHUB_OUTPUT"
+            echo "Channel: stable (even minor $MINOR)"
+          fi
+
+      - name: Package .vsix
+        run: npx vsce package ${{ steps.channel.outputs.flag }} --no-dependencies -o mcap-explorer.vsix
+
+      - name: Publish to Visual Studio Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish ${{ steps.channel.outputs.flag }} --packagePath mcap-explorer.vsix --skip-duplicate
+
+      - name: Publish to Open VSX
+        # Optional: only runs meaningfully when OVSX_PAT is configured.
+        continue-on-error: true
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish mcap-explorer.vsix --skip-duplicate
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE_FLAG: ${{ steps.channel.outputs.pre_release == 'true' && '--prerelease' || '' }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" mcap-explorer.vsix \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes $PRERELEASE_FLAG
