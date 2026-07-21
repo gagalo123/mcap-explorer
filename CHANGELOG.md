@@ -7,9 +7,9 @@ described in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
-## [0.1.0]
+## [0.2.0]
 
-Initial preview release (pre-release channel — see RELEASING.md).
+Initial public release.
 
 ### Added
 

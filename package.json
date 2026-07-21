@@ -2,7 +2,7 @@
   "name": "mcap-explorer",
   "displayName": "MCAP Explorer",
   "description": "Explore MCAP robotics log files in VS Code: topics, schemas, statistics, metadata and attachments — instant summary even for multi-GB files, local or over Remote SSH.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "gagalo123",
   "license": "MIT",
   "icon": "media/icon.png",
