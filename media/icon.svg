@@ -1,0 +1,30 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2b2b4d"/>
+      <stop offset="1" stop-color="#15151f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- card background -->
+  <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg)" stroke="#3d3d63" stroke-width="1.5"/>
+
+  <!-- channel timeline tracks: dot (channel) + bar (message span) -->
+  <!-- track 1: cyan -->
+  <circle cx="26" cy="40" r="4" fill="#38bdf8"/>
+  <rect x="38" y="34.5" width="68" height="11" rx="5.5" fill="#38bdf8"/>
+  <!-- track 2: green -->
+  <circle cx="26" cy="58" r="4" fill="#34d399"/>
+  <rect x="38" y="52.5" width="46" height="11" rx="5.5" fill="#34d399"/>
+  <!-- track 3: amber -->
+  <circle cx="26" cy="76" r="4" fill="#fbbf24"/>
+  <rect x="38" y="70.5" width="64" height="11" rx="5.5" fill="#fbbf24"/>
+  <!-- track 4: rose -->
+  <circle cx="26" cy="94" r="4" fill="#fb7185"/>
+  <rect x="38" y="88.5" width="38" height="11" rx="5.5" fill="#fb7185"/>
+
+  <!-- playhead / scan cursor sweeping across the tracks -->
+  <rect x="60" y="24" width="8" height="82" rx="4" fill="#ffffff" opacity="0.16"/>
+  <rect x="62.5" y="24" width="3" height="82" rx="1.5" fill="#f8fafc"/>
+  <circle cx="64" cy="24" r="5" fill="#f8fafc"/>
+</svg>

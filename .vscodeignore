@@ -11,4 +11,5 @@ tsconfig.json
 tsconfig.webview.json
 vitest.config.ts
 **/*.map
+media/*.svg
 .gitignore
