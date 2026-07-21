@@ -14,6 +14,8 @@ export interface SchemaInfo {
 }
 
 export interface ChannelDecoder {
+  /** Factory id that produced this decoder ("json"|"protobuf"|"ros1"|"ros2"|"raw"). */
+  id: string;
   decode(data: Uint8Array): DecodedValue;
   dispose?(): void;
 }

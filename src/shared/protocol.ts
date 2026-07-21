@@ -1,4 +1,5 @@
 import type {
+  MessagePageDto,
   MetadataDto,
   SaveAttachmentResultDto,
   SchemaSourceDto,
@@ -53,7 +54,8 @@ export type ResponseBody =
   | { type: "summary"; summary: SummaryDto }
   | { type: "schemaSource"; source: SchemaSourceDto }
   | { type: "metadata"; records: MetadataDto[] }
-  | { type: "saveAttachment"; result: SaveAttachmentResultDto };
+  | { type: "saveAttachment"; result: SaveAttachmentResultDto }
+  | { type: "messages"; page: MessagePageDto };
 
 export type HostToWebview =
   | { kind: "init"; summary?: SummaryDto; error?: ErrorDto }

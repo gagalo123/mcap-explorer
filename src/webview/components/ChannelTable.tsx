@@ -12,7 +12,14 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "freqHz", label: "Frequency" },
 ];
 
-export function ChannelTable({ channels }: { channels: ChannelDto[] }) {
+export function ChannelTable({
+  channels,
+  onSelect,
+}: {
+  channels: ChannelDto[];
+  /** When set, rows are clickable and open the message browser for that channel. */
+  onSelect?: (channelId: number) => void;
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("topic");
   const [ascending, setAscending] = useState(true);
 
@@ -43,6 +50,7 @@ export function ChannelTable({ channels }: { channels: ChannelDto[] }) {
     <section>
       <h2>
         Channels <span class="count">({channels.length})</span>
+        {onSelect && <span class="dim hint"> — click a row to browse messages</span>}
       </h2>
       <table>
         <thead>
@@ -57,7 +65,23 @@ export function ChannelTable({ channels }: { channels: ChannelDto[] }) {
         </thead>
         <tbody>
           {sorted.map((channel) => (
-            <tr key={channel.id}>
+            <tr
+              key={channel.id}
+              class={onSelect ? "clickable-row" : undefined}
+              role={onSelect ? "button" : undefined}
+              tabIndex={onSelect ? 0 : undefined}
+              onClick={onSelect ? () => onSelect(channel.id) : undefined}
+              onKeyDown={
+                onSelect
+                  ? (e: KeyboardEvent) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelect(channel.id);
+                      }
+                    }
+                  : undefined
+              }
+            >
               <td class="mono">{channel.topic}</td>
               <td>
                 {channel.schemaName}

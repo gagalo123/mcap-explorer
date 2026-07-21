@@ -10,6 +10,7 @@ export const rawDecoderFactory: DecoderFactory = {
   },
   async create(): Promise<ChannelDecoder> {
     return {
+      id: "raw",
       decode(data: Uint8Array) {
         const preview = data.subarray(0, PREVIEW_BYTES);
         return {

@@ -105,6 +105,10 @@ export class RpcHost {
         this.#logReadStats("scan finished");
         return { type: "summary", summary };
       }
+      case "queryMessages": {
+        const page = await session.queryMessages(op, signal);
+        return { type: "messages", page };
+      }
       default:
         throw new McapExplorerError(
           "UNSUPPORTED_OP",

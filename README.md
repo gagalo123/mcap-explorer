@@ -13,6 +13,7 @@ Explore [MCAP](https://mcap.dev) robotics log files directly in VS Code: open a 
 - **Attachments** — list and save to disk (streamed in 4 MB windows, never held in memory).
 - **Unindexed files** — graceful fallback with an explicit, cancellable full scan with progress; truncated files (e.g. still being recorded) are handled without crashing.
 - **`MCAP: Show Info`** — right-click a `.mcap` file in the explorer for a plain-text summary in the output channel.
+- **Message browsing** — click a channel to page through its messages in a virtualized list and inspect each one as a collapsible JSON tree, decoded from JSON, Protobuf, ROS 1 or ROS 2 (CDR). Binary fields are shown as bytes previews (length + hex), never shipped whole to the UI.
 
 ## Large files & Remote SSH
 
@@ -34,7 +35,7 @@ Safety rails:
 | Phase | Scope | Status |
 | ----- | ----- | ------ |
 | 1 | Summary explorer (topics/schemas/stats/metadata/attachments) | ✅ |
-| 2 | Message browsing with decoders (json, protobuf, ros1/ros2, cdr) | planned |
+| 2 | Message browsing with decoders (json, protobuf, ros1/ros2, cdr) | ✅ |
 | 3 | Image / video frame preview (WebCodecs) | planned |
 | 4 | Time-series plots for numeric topics | planned |
 
