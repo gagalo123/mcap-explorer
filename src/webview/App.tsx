@@ -4,6 +4,7 @@ import { AttachmentPanel } from "./components/AttachmentPanel";
 import { ChannelTable } from "./components/ChannelTable";
 import { MessageBrowser } from "./components/MessageBrowser";
 import { MetadataPanel } from "./components/MetadataPanel";
+import { PreviewView } from "./components/PreviewView";
 import { ScanBanner } from "./components/ScanBanner";
 import { SchemaPanel } from "./components/SchemaPanel";
 import { SummaryHeader } from "./components/SummaryHeader";
@@ -16,10 +17,15 @@ type Phase =
   | { kind: "error"; error: ErrorDto }
   | { kind: "ready"; summary: SummaryDto };
 
-type View = { kind: "summary" } | { kind: "messages"; channelId: number };
+type Anchor = { logTime: string; sequence: number };
+
+type View =
+  | { kind: "summary" }
+  | { kind: "messages"; channelId: number }
+  | { kind: "preview"; channelId: number; anchor?: Anchor };
 
 /** Bump when persisted-state shape changes — stale state is discarded. */
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 
 interface PersistedState {
   v: number;
@@ -81,6 +87,12 @@ export function App({ rpc }: { rpc: RpcClient }) {
     persist({ view: next });
   };
 
+  const goToPreview = (channelId: number, anchor?: Anchor) => {
+    const next: View = { kind: "preview", channelId, anchor };
+    setView(next);
+    persist({ view: next });
+  };
+
   const onScanned = (summary: SummaryDto) => {
     setPhase({ kind: "ready", summary });
     persist({ summary });
@@ -104,10 +116,33 @@ export function App({ rpc }: { rpc: RpcClient }) {
 
   const { summary } = phase;
 
+  if (view.kind === "preview") {
+    const channel = summary.channels.find((c) => c.id === view.channelId);
+    if (channel && summary.indexed && channel.preview) {
+      return (
+        <PreviewView
+          channel={channel}
+          rpc={rpc}
+          anchor={view.anchor}
+          timeRange={summary.timeRange}
+          onBack={() => goToMessages(channel.id)}
+        />
+      );
+    }
+    // Channel gone, not indexed, or not previewable — fall back to summary.
+  }
+
   if (view.kind === "messages") {
     const channel = summary.channels.find((c) => c.id === view.channelId);
     if (channel && summary.indexed) {
-      return <MessageBrowser channel={channel} rpc={rpc} onBack={goToSummary} />;
+      return (
+        <MessageBrowser
+          channel={channel}
+          rpc={rpc}
+          onBack={goToSummary}
+          onPreview={channel.preview ? (anchor) => goToPreview(channel.id, anchor) : undefined}
+        />
+      );
     }
     // Channel gone or file not indexed — fall back to summary.
   }

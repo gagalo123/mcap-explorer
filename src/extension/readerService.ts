@@ -4,10 +4,15 @@ import type { DecompressHandlers, IReadable, TypedMcapRecords } from "@mcap/core
 import { DecoderRegistry } from "./decoders/registry";
 import type { ChannelDecoder } from "./decoders/types";
 import { McapExplorerError } from "./errors";
+import { classifyFrame, codecStringFor, normalizeCodec } from "./media/annexb";
+import type { VideoCodec } from "./media/annexb";
+import { createMediaExtractor, mediaKindForSchema } from "./media/extract";
+import type { MediaExtractor } from "./media/extract";
 import type {
   AttachmentIndexDto,
   ChannelDto,
   ChunksDto,
+  ImageFrameDto,
   MessageDto,
   MessagePageDto,
   MetadataDto,
@@ -16,6 +21,8 @@ import type {
   StatsDto,
   SummaryDto,
   TimeRangeDto,
+  VideoFrameDto,
+  VideoFramesDto,
 } from "../shared/dto";
 import { durationBetween, frequencyHz, fromTimeNs, toTimeNs } from "../shared/time";
 import type { TimeNs } from "../shared/time";
@@ -46,12 +53,29 @@ export interface QueryMessagesOptions {
   limitBytes: number;
 }
 
+export interface FrameWindowOptions {
+  channelId: number;
+  anchor: { logTime: TimeNs; sequence: number };
+  count: number;
+  needKeyframe: boolean;
+}
+
+export interface ImageFrameOptions {
+  channelId: number;
+  target: { logTime: TimeNs; sequence: number };
+}
+
 const SCAN_WINDOW_BYTES = 4 * 1024 * 1024;
 const SCAN_PROGRESS_INTERVAL_BYTES = 64 * 1024 * 1024;
 const SCHEMA_TEXT_LIMIT = 256 * 1024;
 const SCHEMA_HEX_LIMIT = 4 * 1024;
 const SCAN_METADATA_LIMIT = 10_000;
 const ATTACHMENT_WINDOW_BYTES = 4 * 1024 * 1024;
+/** Video preview bounds (Phase 3). */
+const DEFAULT_MAX_FRAME_COUNT = 600;
+const DEFAULT_MAX_KEYFRAME_LOOKBACK = 600;
+const DEFAULT_MAX_FRAME_WINDOW_BYTES = 8 * 1024 * 1024;
+const DEFAULT_MAX_FRAME_BYTES = 32 * 1024 * 1024;
 
 /** Minimum valid MCAP: magic + footer record + trailing magic. */
 const MIN_FILE_SIZE = 8 + 1 + 8 + 20 + 8;
@@ -74,6 +98,8 @@ export class McapFileSession {
   #registry = new DecoderRegistry();
   /** Per-channel decoder cache (built lazily on first message of a channel). */
   #decoderCache = new Map<number, ChannelDecoder>();
+  /** Per-channel media extractor cache; null = channel is not previewable. */
+  #mediaExtractorCache = new Map<number, MediaExtractor | null>();
 
   private constructor(
     readable: IReadable,
@@ -478,29 +504,7 @@ export class McapFileSession {
     }
 
     // OOM guard: refuse if any chunk we would decompress inflates past the limit.
-    const chunkLimit = BigInt(this.#opts.maxChunkUncompressedSize);
-    for (const chunk of reader.chunkIndexes) {
-      if (startTime !== undefined && chunk.messageEndTime < startTime) {
-        continue;
-      }
-      if (endTime !== undefined && chunk.messageStartTime > endTime) {
-        continue;
-      }
-      let relevant = channelIds.size === 0;
-      for (const id of channelIds) {
-        if (chunk.messageIndexOffsets.has(id)) {
-          relevant = true;
-          break;
-        }
-      }
-      if (relevant && chunk.uncompressedSize > chunkLimit) {
-        throw new McapExplorerError(
-          "CHUNK_TOO_LARGE",
-          `A chunk in this range inflates to ${chunk.uncompressedSize} bytes, above the ` +
-            `configured limit of ${this.#opts.maxChunkUncompressedSize}.`,
-        );
-      }
-    }
+    this.#guardChunkRange(channelIds, startTime, endTime);
 
     const messages: MessageDto[] = [];
     let approxBytes = 0;
@@ -596,12 +600,289 @@ export class McapFileSession {
       };
     }
   }
+
+  /**
+   * OOM guard shared by message and frame reads: refuses to proceed if any
+   * chunk we might decompress in [startTime, endTime] for the given channels
+   * inflates beyond the configured limit.
+   */
+  #guardChunkRange(
+    channelIds: Set<number>,
+    startTime: bigint | undefined,
+    endTime: bigint | undefined,
+  ): void {
+    const reader = this.#reader;
+    if (!reader) {
+      return;
+    }
+    const chunkLimit = BigInt(this.#opts.maxChunkUncompressedSize);
+    for (const chunk of reader.chunkIndexes) {
+      if (startTime !== undefined && chunk.messageEndTime < startTime) {
+        continue;
+      }
+      if (endTime !== undefined && chunk.messageStartTime > endTime) {
+        continue;
+      }
+      let relevant = channelIds.size === 0;
+      for (const id of channelIds) {
+        if (chunk.messageIndexOffsets.has(id)) {
+          relevant = true;
+          break;
+        }
+      }
+      if (relevant && chunk.uncompressedSize > chunkLimit) {
+        throw new McapExplorerError(
+          "CHUNK_TOO_LARGE",
+          `A chunk in this range inflates to ${chunk.uncompressedSize} bytes, above the ` +
+            `configured limit of ${this.#opts.maxChunkUncompressedSize}.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Returns a window of compressed video frames for a channel. When
+   * `needKeyframe` is set (a seek), it first walks backward to the nearest
+   * keyframe so the returned window is self-decodable from index 0; otherwise
+   * it continues forward from the anchor (playback). Frames cross as base64 —
+   * a bounded, user-initiated relaxation of the no-bytes-across-bridge rule.
+   */
+  async getFrameWindow(opts: FrameWindowOptions, signal?: AbortSignal): Promise<VideoFramesDto> {
+    const reader = this.#reader;
+    if (!reader) {
+      throw new McapExplorerError("NO_INDEX", "Video preview requires an indexed file.");
+    }
+    const channel = reader.channelsById.get(opts.channelId);
+    if (!channel) {
+      throw new McapExplorerError("IO_ERROR", `Channel ${opts.channelId} not found.`);
+    }
+    const extractor = await this.#getMediaExtractor(opts.channelId, channel);
+    if (extractor.kind !== "video") {
+      throw new McapExplorerError("NOT_PREVIEWABLE", `Channel ${channel.topic} is not a video channel.`);
+    }
+
+    const channelIds = new Set([channel.id]);
+    const anchorTime = fromTimeNs(opts.anchor.logTime);
+    const count = Math.max(1, Math.min(opts.count, DEFAULT_MAX_FRAME_COUNT));
+
+    // Resolve the read start (inclusive): the preceding keyframe on a seek, or
+    // the anchor itself on a continuation/pagination step.
+    let startTime: bigint;
+    let startSeq: number;
+    if (opts.needKeyframe) {
+      this.#guardChunkRange(channelIds, undefined, anchorTime);
+      const kf = await this.#findKeyframeBefore(channel.topic, extractor, anchorTime, opts.anchor.sequence, signal);
+      startTime = kf.logTime;
+      startSeq = kf.sequence;
+    } else {
+      this.#guardChunkRange(channelIds, anchorTime, anchorTime);
+      startTime = anchorTime;
+      startSeq = opts.anchor.sequence;
+    }
+
+    const frames: VideoFrameDto[] = [];
+    let codec: VideoCodec | undefined;
+    let keyframePayload: Uint8Array | undefined;
+    let totalBytes = 0;
+    let reachedEnd = true;
+    let nextAnchor: { logTime: TimeNs; sequence: number } | undefined;
+    let reachedAnchor = !opts.needKeyframe; // a seek must span up to its anchor frame
+
+    for await (const msg of reader.readMessages({ topics: [channel.topic], startTime })) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Frame query cancelled.");
+      }
+      // Skip only frames before the (inclusive) start at the start timestamp.
+      if (msg.logTime === startTime && msg.sequence < startSeq) {
+        continue;
+      }
+
+      const media = extractor.extract(msg.data);
+      codec ??= normalizeCodec(media.format);
+      if (!codec) {
+        throw new McapExplorerError("NOT_PREVIEWABLE", `Unsupported video format "${media.format}".`);
+      }
+      const len = media.payload.byteLength;
+      if (len > DEFAULT_MAX_FRAME_BYTES) {
+        throw new McapExplorerError("FRAME_TOO_LARGE", `A single frame is ${len} bytes, above the preview limit.`);
+      }
+
+      // Stop only once the anchor is covered, so a seek always reaches its frame.
+      if (
+        reachedAnchor &&
+        (frames.length >= count ||
+          (frames.length > 0 && totalBytes + len > DEFAULT_MAX_FRAME_WINDOW_BYTES))
+      ) {
+        reachedEnd = false;
+        nextAnchor = { logTime: toTimeNs(msg.logTime), sequence: msg.sequence };
+        break;
+      }
+
+      const keyframe = classifyFrame(media.payload, codec).keyframe;
+      if (keyframe && !keyframePayload) {
+        keyframePayload = media.payload.slice();
+      }
+      frames.push({
+        sequence: msg.sequence,
+        logTime: toTimeNs(msg.logTime),
+        keyframe,
+        dataBase64: toBase64(media.payload),
+      });
+      totalBytes += len;
+      if (
+        !reachedAnchor &&
+        (msg.logTime > anchorTime || (msg.logTime === anchorTime && msg.sequence >= opts.anchor.sequence))
+      ) {
+        reachedAnchor = true;
+      }
+    }
+
+    return {
+      codec: codec ?? "h264",
+      codecString: codec ? codecStringFor(codec, keyframePayload) : "",
+      frames,
+      keyframeIndex: frames.findIndex((f) => f.keyframe),
+      reachedEnd,
+      nextAnchor,
+      totalBytes,
+    };
+  }
+
+  /** Returns one image message decoded to renderable form (compressed or raw). */
+  async getImageFrame(opts: ImageFrameOptions, signal?: AbortSignal): Promise<ImageFrameDto> {
+    const reader = this.#reader;
+    if (!reader) {
+      throw new McapExplorerError("NO_INDEX", "Image preview requires an indexed file.");
+    }
+    const channel = reader.channelsById.get(opts.channelId);
+    if (!channel) {
+      throw new McapExplorerError("IO_ERROR", `Channel ${opts.channelId} not found.`);
+    }
+    const extractor = await this.#getMediaExtractor(opts.channelId, channel);
+    if (extractor.kind === "video") {
+      throw new McapExplorerError("NOT_PREVIEWABLE", `Channel ${channel.topic} is video; use the video player.`);
+    }
+    const targetTime = fromTimeNs(opts.target.logTime);
+    this.#guardChunkRange(new Set([channel.id]), targetTime, targetTime);
+
+    const msg = await this.#findMessage(channel.topic, targetTime, opts.target.sequence, signal);
+    if (!msg) {
+      throw new McapExplorerError("IO_ERROR", "Message not found for image preview.");
+    }
+    if (msg.data.byteLength > DEFAULT_MAX_FRAME_BYTES) {
+      throw new McapExplorerError("FRAME_TOO_LARGE", `Image is ${msg.data.byteLength} bytes, above the preview limit.`);
+    }
+    const media = extractor.extract(msg.data);
+    return {
+      kind: extractor.kind === "image-raw" ? "raw" : "compressed",
+      format: media.format,
+      width: media.width,
+      height: media.height,
+      step: media.step,
+      sequence: msg.sequence,
+      logTime: toTimeNs(msg.logTime),
+      dataBase64: toBase64(media.payload),
+    };
+  }
+
+  async #findKeyframeBefore(
+    topic: string,
+    extractor: MediaExtractor,
+    anchorTime: bigint,
+    anchorSeq: number,
+    signal?: AbortSignal,
+  ): Promise<{ logTime: bigint; sequence: number }> {
+    const reader = this.#reader!;
+    let scanned = 0;
+    for await (const msg of reader.readMessages({ topics: [topic], endTime: anchorTime, reverse: true })) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Frame query cancelled.");
+      }
+      // Ignore frames after the anchor that share its timestamp.
+      if (msg.logTime === anchorTime && msg.sequence > anchorSeq) {
+        continue;
+      }
+      const media = extractor.extract(msg.data);
+      const codec = normalizeCodec(media.format);
+      if (!codec) {
+        throw new McapExplorerError("NOT_PREVIEWABLE", `Unsupported video format "${media.format}".`);
+      }
+      if (classifyFrame(media.payload, codec).keyframe) {
+        return { logTime: msg.logTime, sequence: msg.sequence };
+      }
+      if (++scanned >= DEFAULT_MAX_KEYFRAME_LOOKBACK) {
+        break;
+      }
+    }
+    throw new McapExplorerError(
+      "NO_KEYFRAME_IN_RANGE",
+      `No keyframe within ${DEFAULT_MAX_KEYFRAME_LOOKBACK} frames before the selected frame.`,
+    );
+  }
+
+  async #findMessage(
+    topic: string,
+    time: bigint,
+    sequence: number,
+    signal?: AbortSignal,
+  ): Promise<TypedMcapRecords["Message"] | undefined> {
+    const reader = this.#reader!;
+    let firstAtTime: TypedMcapRecords["Message"] | undefined;
+    for await (const msg of reader.readMessages({ topics: [topic], startTime: time, endTime: time })) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Image query cancelled.");
+      }
+      if (msg.sequence === sequence) {
+        return msg;
+      }
+      if (!firstAtTime) {
+        firstAtTime = msg;
+      }
+    }
+    return firstAtTime;
+  }
+
+  async #getMediaExtractor(
+    channelId: number,
+    channel: Channel,
+  ): Promise<MediaExtractor> {
+    if (this.#mediaExtractorCache.has(channelId)) {
+      const cached = this.#mediaExtractorCache.get(channelId) ?? null;
+      if (!cached) {
+        throw new McapExplorerError("NOT_PREVIEWABLE", `Channel ${channel.topic} has no image/video preview.`);
+      }
+      return cached;
+    }
+    const schemaRecord = this.#reader!.schemasById.get(channel.schemaId);
+    const schemaInfo = schemaRecord
+      ? { name: schemaRecord.name, encoding: schemaRecord.encoding, data: schemaRecord.data }
+      : undefined;
+    let extractor: MediaExtractor | null = null;
+    try {
+      extractor = await createMediaExtractor(channel.messageEncoding, schemaInfo);
+    } catch {
+      extractor = null;
+    }
+    this.#mediaExtractorCache.set(channelId, extractor);
+    if (!extractor) {
+      throw new McapExplorerError(
+        "NOT_PREVIEWABLE",
+        `Channel ${channel.topic} (${schemaRecord?.name ?? "no schema"}) has no image/video preview.`,
+      );
+    }
+    return extractor;
+  }
 }
 
 /** Rough JSON-size estimate for pagination (avoids full stringify per field). */
 function estimateDtoBytes(dto: MessageDto): number {
   const valueSize = dto.value !== undefined ? JSON.stringify(dto.value).length : 0;
   return valueSize + 128;
+}
+
+/** Base64-encode a byte view (Node Buffer; respects offset/length). */
+function toBase64(data: Uint8Array): string {
+  return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64");
 }
 
 function buildIndexedSummary(reader: McapIndexedReader, opts: SessionOptions): SummaryDto {
@@ -697,6 +978,7 @@ function buildChannelDtos(
       messageEncoding: channel.messageEncoding,
       messageCount: count?.toString(),
       freqHz: count !== undefined ? frequencyHz(count, durationNs) : undefined,
+      preview: schema ? mediaKindForSchema(schema.name) : undefined,
     });
   }
   dtos.sort((a, b) => a.topic.localeCompare(b.topic));

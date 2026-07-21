@@ -69,6 +69,36 @@ async function main(): Promise<void> {
     console.log(
       `bytes read for this query: +${((metered.bytesRead - before) / 1024).toFixed(1)} KiB`,
     );
+
+    // Phase 3: exercise the media fetch path (no decode — that's WebCodecs/browser).
+    const channel = summary.channels.find((c) => c.topic === topic);
+    if (channel?.preview === "video" && page.messages[0]) {
+      const before2 = metered.bytesRead;
+      const win = await session.getFrameWindow({
+        channelId: channel.id,
+        anchor: { logTime: page.messages[0].logTime, sequence: page.messages[0].sequence },
+        count: 30,
+        needKeyframe: true,
+      });
+      console.log(
+        `\n--- video window for ${topic} ---\n` +
+          `codec=${win.codec} codecString=${win.codecString} frames=${win.frames.length} ` +
+          `keyframeIndex=${win.keyframeIndex} totalBytes=${win.totalBytes} reachedEnd=${win.reachedEnd}\n` +
+          `bytes read for window: +${((metered.bytesRead - before2) / 1024).toFixed(1)} KiB`,
+      );
+    } else if (channel?.preview === "image" && page.messages[0]) {
+      const before2 = metered.bytesRead;
+      const img = await session.getImageFrame({
+        channelId: channel.id,
+        target: { logTime: page.messages[0].logTime, sequence: page.messages[0].sequence },
+      });
+      console.log(
+        `\n--- image frame for ${topic} ---\n` +
+          `kind=${img.kind} format=${img.format} ${img.width ?? "?"}×${img.height ?? "?"} ` +
+          `base64Len=${img.dataBase64.length}\n` +
+          `bytes read for image: +${((metered.bytesRead - before2) / 1024).toFixed(1)} KiB`,
+      );
+    }
   }
 
   await handle.close();

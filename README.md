@@ -2,7 +2,7 @@
 
 Explore [MCAP](https://mcap.dev) robotics log files directly in VS Code: open a `.mcap` file and instantly see its topics, schemas, statistics, metadata records and attachments — even for multi-GB files, local or over Remote SSH.
 
-> Status: v0.1 — summary explorer. Message browsing, image/video preview and time-series plots are on the roadmap below.
+> Status: summary explorer + message browsing + image/video preview. Time-series plots are on the roadmap below.
 
 ## Features
 
@@ -14,6 +14,7 @@ Explore [MCAP](https://mcap.dev) robotics log files directly in VS Code: open a 
 - **Unindexed files** — graceful fallback with an explicit, cancellable full scan with progress; truncated files (e.g. still being recorded) are handled without crashing.
 - **`MCAP: Show Info`** — right-click a `.mcap` file in the explorer for a plain-text summary in the output channel.
 - **Message browsing** — click a channel to page through its messages in a virtualized list and inspect each one as a collapsible JSON tree, decoded from JSON, Protobuf, ROS 1 or ROS 2 (CDR). Binary fields are shown as bytes previews (length + hex), never shipped whole to the UI.
+- **Image & video preview** — preview image and video channels directly. Images (`CompressedImage` JPEG/PNG, `RawImage` rgb8/bgr8/mono8) render everywhere. Video (`CompressedVideo`: H.264/H.265/VP9/AV1) decodes via WebCodecs with keyframe-aligned seeking, play/pause/step and a time scrub. Only the frames you preview cross to the UI (on demand, as base64) — never bulk video. Where the host can't decode a codec in hardware (notably HEVC on headless/NVIDIA Linux), the preview degrades with a clear message and a frame-download fallback.
 
 ## Large files & Remote SSH
 
@@ -27,8 +28,8 @@ Safety rails:
 
 ## Install
 
+- Marketplace / Open VSX: search for **MCAP Explorer** (`gagalo123.mcap-explorer`).
 - From source: `npm ci && npm run build && npx @vscode/vsce package --no-dependencies`, then install the generated `.vsix` via *Extensions: Install from VSIX…*
-- Marketplace / Open VSX: coming with the first tagged release.
 
 ## Roadmap
 
@@ -36,7 +37,8 @@ Safety rails:
 | ----- | ----- | ------ |
 | 1 | Summary explorer (topics/schemas/stats/metadata/attachments) | ✅ |
 | 2 | Message browsing with decoders (json, protobuf, ros1/ros2, cdr) | ✅ |
-| 3 | Image / video frame preview (WebCodecs) | planned |
+| 3 | Image / video frame preview (WebCodecs) + basic playback | ✅ |
+| 3.5 | WASM software video decode (HEVC on headless/NVIDIA Linux) | planned |
 | 4 | Time-series plots for numeric topics | planned |
 
 ## Contributing

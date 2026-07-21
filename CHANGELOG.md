@@ -16,6 +16,22 @@ described in [RELEASING.md](RELEASING.md).
   (`ros1msg`) and ROS 2 (`cdr` / `ros2msg`); unsupported encodings fall back to a
   raw hex view. int64/uint64 render as strings and binary fields as bytes nodes
   (length + hex preview), so raw payloads never reach the webview.
+- Image & video preview: image/video channels get a **Preview** action on a
+  selected message.
+  - Video (`foxglove.CompressedVideo`, H.264/H.265/VP9/AV1) decodes with the
+    browser's WebCodecs API. Seeking finds the preceding keyframe and decodes
+    the GOP forward; play/pause/step and a coarse time scrub are provided.
+    Keyframe detection and the WebCodecs codec string are parsed host-side from
+    the Annex-B bitstream. On hosts that can't decode the codec (notably HEVC on
+    headless or NVIDIA-only Linux, where Chromium has no software HEVC decoder) a
+    clear message and a "download this frame" fallback are shown; a WASM software
+    decoder for those hosts is planned (Phase 3.5).
+  - Images: `foxglove.CompressedImage` / `sensor_msgs/CompressedImage`
+    (JPEG/PNG via `createImageBitmap`) and `foxglove.RawImage` /
+    `sensor_msgs/Image` (`rgb8`/`bgr8`/`mono8` → canvas, honoring row stride).
+  - Selected frame bytes cross the bridge on demand as base64 — a bounded,
+    user-initiated relaxation of the no-raw-bytes rule; bulk/file data still
+    never crosses.
 
 ## [0.2.0]
 

@@ -109,6 +109,14 @@ export class RpcHost {
         const page = await session.queryMessages(op, signal);
         return { type: "messages", page };
       }
+      case "getFrameWindow": {
+        const data = await session.getFrameWindow(op, signal);
+        return { type: "videoFrames", data };
+      }
+      case "getImageFrame": {
+        const data = await session.getImageFrame(op, signal);
+        return { type: "imageFrame", data };
+      }
       default:
         throw new McapExplorerError(
           "UNSUPPORTED_OP",

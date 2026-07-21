@@ -20,10 +20,13 @@ export function MessageBrowser({
   channel,
   rpc,
   onBack,
+  onPreview,
 }: {
   channel: ChannelDto;
   rpc: RpcClient;
   onBack: () => void;
+  /** Set for image/video channels: opens the preview at the given message. */
+  onPreview?: (anchor: { logTime: string; sequence: number }) => void;
 }) {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -146,8 +149,21 @@ export function MessageBrowser({
               <div class="error-inline">Decode error: {selectedMsg.decodeError}</div>
             ) : (
               <>
-                <div class="dim detail-head">
-                  #{selectedMsg.sequence} · {selectedMsg.decoder} · {formatTimestamp(selectedMsg.logTime)}
+                <div class="detail-head">
+                  <span class="dim">
+                    #{selectedMsg.sequence} · {selectedMsg.decoder} ·{" "}
+                    {formatTimestamp(selectedMsg.logTime)}
+                  </span>
+                  {onPreview && (
+                    <button
+                      class="preview-btn"
+                      onClick={() =>
+                        onPreview({ logTime: selectedMsg.logTime, sequence: selectedMsg.sequence })
+                      }
+                    >
+                      {channel.preview === "video" ? "▶ Preview frame" : "🖼 Preview image"}
+                    </button>
+                  )}
                 </div>
                 <JsonTree value={selectedMsg.value ?? null} />
               </>

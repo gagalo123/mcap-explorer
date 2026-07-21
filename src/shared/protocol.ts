@@ -1,9 +1,11 @@
 import type {
+  ImageFrameDto,
   MessagePageDto,
   MetadataDto,
   SaveAttachmentResultDto,
   SchemaSourceDto,
   SummaryDto,
+  VideoFramesDto,
 } from "./dto";
 import type { TimeNs } from "./time";
 
@@ -15,7 +17,10 @@ export type ErrCode =
   | "CANCELLED"
   | "IO_ERROR"
   | "UNSUPPORTED_SCHEME"
-  | "UNSUPPORTED_OP";
+  | "UNSUPPORTED_OP"
+  | "NO_KEYFRAME_IN_RANGE"
+  | "FRAME_TOO_LARGE"
+  | "NOT_PREVIEWABLE";
 
 export interface ErrorDto {
   code: ErrCode;
@@ -41,7 +46,18 @@ export type RequestOp =
       limitCount: number;
       limitBytes: number;
     }
-  | { op: "getAttachmentPreview"; attachmentIndex: number };
+  | { op: "getAttachmentPreview"; attachmentIndex: number }
+  // Phase 3 — image/video preview (frame bytes cross as base64, on demand):
+  | {
+      op: "getFrameWindow";
+      channelId: number;
+      anchor: { logTime: TimeNs; sequence: number };
+      /** Number of frames to return (from the keyframe when needKeyframe). */
+      count: number;
+      /** Seek: find the preceding keyframe first. False: continue playback forward. */
+      needKeyframe: boolean;
+    }
+  | { op: "getImageFrame"; channelId: number; target: { logTime: TimeNs; sequence: number } };
 
 export type WebviewToHost =
   | { kind: "request"; id: number; op: RequestOp }
@@ -55,7 +71,9 @@ export type ResponseBody =
   | { type: "schemaSource"; source: SchemaSourceDto }
   | { type: "metadata"; records: MetadataDto[] }
   | { type: "saveAttachment"; result: SaveAttachmentResultDto }
-  | { type: "messages"; page: MessagePageDto };
+  | { type: "messages"; page: MessagePageDto }
+  | { type: "videoFrames"; data: VideoFramesDto }
+  | { type: "imageFrame"; data: ImageFrameDto };
 
 export type HostToWebview =
   | { kind: "init"; summary?: SummaryDto; error?: ErrorDto }
