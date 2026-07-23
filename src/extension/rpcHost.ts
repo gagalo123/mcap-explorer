@@ -117,6 +117,10 @@ export class RpcHost {
         const data = await session.getImageFrame(op, signal);
         return { type: "imageFrame", data };
       }
+      case "getImageWindow": {
+        const data = await session.getImageWindow(op, signal);
+        return { type: "imageFrames", data };
+      }
       case "queryTimeSeries": {
         const data = await session.queryTimeSeries(op, signal);
         return { type: "timeSeries", data };

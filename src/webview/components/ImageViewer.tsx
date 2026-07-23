@@ -6,8 +6,10 @@ import { formatBytes, formatTimestamp } from "../../shared/time";
 import type { RpcClient } from "../rpcClient";
 import { RpcError } from "../rpcClient";
 
-/** Minimum ms between frames while playing (decode latency usually dominates). */
-const PLAY_MS = 80;
+/** Frames to request per playback window (server also caps by total bytes). */
+const PLAY_WINDOW = 32;
+/** Target ms between frames while playing (decode latency may dominate). */
+const PLAY_MS = 40;
 
 /** Fetches and renders one image message; prev/next walk the channel lazily. */
 export function ImageViewer({
@@ -89,15 +91,29 @@ export function ImageViewer({
     await load(list[next]!);
   };
 
-  // Playback: auto-advance through frames like a video. Sequential awaits pace
-  // by decode latency; PLAY_MS adds a floor. Restarts from the first frame if
-  // started at the end. Stops at the last frame or when paused.
+  // Playback: fetch frames a window at a time (one RPC round-trip per window)
+  // and display them from memory, prefetching the next window before the
+  // current runs out. This replaces the per-frame round-trip that made naive
+  // stepping slow and jittery. Stops at the end.
   useEffect(() => {
     playingRef.current = playing;
     if (!playing) {
       return;
     }
     let cancelled = false;
+
+    const fetchWindow = async (a: { logTime: string; sequence: number }) => {
+      const body = await rpc.request({
+        op: "getImageWindow",
+        channelId: channel.id,
+        anchor: a,
+        count: PLAY_WINDOW,
+      });
+      return body.type === "imageFrames"
+        ? body.data
+        : { frames: [], reachedEnd: true, nextAnchor: undefined };
+    };
+
     void (async () => {
       const list = await ensureIndex();
       if (cancelled || list.length === 0) {
@@ -113,13 +129,29 @@ export function ImageViewer({
             )
           : 0);
       if (cur >= list.length - 1) {
-        cur = -1;
+        cur = 0; // restart from the beginning when starting at the end
       }
-      while (!cancelled && playingRef.current && cur < list.length - 1) {
-        cur += 1;
-        setPos(cur);
-        await load(list[cur]!);
-        await new Promise((r) => setTimeout(r, PLAY_MS));
+      let win = await fetchWindow(list[cur]!);
+      let prefetch: ReturnType<typeof fetchWindow> | null = null;
+      while (!cancelled && playingRef.current && win.frames.length > 0) {
+        for (let i = 0; i < win.frames.length; i++) {
+          if (cancelled || !playingRef.current) {
+            return;
+          }
+          setFrame(win.frames[i]);
+          setPos(cur);
+          cur += 1;
+          // Prefetch the next window a few frames early so playback never stalls.
+          if (i === win.frames.length - 4 && !win.reachedEnd && win.nextAnchor && !prefetch) {
+            prefetch = fetchWindow(win.nextAnchor);
+          }
+          await new Promise((r) => setTimeout(r, PLAY_MS));
+        }
+        if (win.reachedEnd || !win.nextAnchor) {
+          break;
+        }
+        win = await (prefetch ?? fetchWindow(win.nextAnchor));
+        prefetch = null;
       }
       if (!cancelled) {
         setPlaying(false);
@@ -180,7 +212,7 @@ export function ImageViewer({
             setPlaying(false);
             void step(-1);
           }}
-          disabled={loading}
+          disabled={loading && !playing}
         >
           ◀ Prev
         </button>
@@ -192,7 +224,7 @@ export function ImageViewer({
             setPlaying(false);
             void step(1);
           }}
-          disabled={loading}
+          disabled={loading && !playing}
         >
           Next ▶
         </button>

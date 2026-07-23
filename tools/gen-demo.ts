@@ -279,6 +279,11 @@ function harnessHtml(mockJson: string): string {
     if (op.op === "getSummary") reply(msg.id, { type:"summary", summary:MOCK.summary });
     else if (op.op === "queryMessages") reply(msg.id, { type:"messages", page:{ messages:MOCK.imuMessages.messages.slice(0, op.limitCount), reachedEnd:true } });
     else if (op.op === "getImageFrame") reply(msg.id, { type:"imageFrame", data:MOCK.image });
+    else if (op.op === "getImageWindow") {
+      const n = 18;
+      const frames = Array.from({ length: n }, (_, i) => ({ ...MOCK.image, sequence: i, logTime: MOCK.imuMessages.messages[i]?.logTime ?? MOCK.image.logTime }));
+      reply(msg.id, { type:"imageFrames", data:{ frames, reachedEnd:true } });
+    }
     else if (op.op === "queryTimeSeries") reply(msg.id, { type:"timeSeries", data:MOCK.series });
     else post({ kind:"response", id:msg.id, ok:false, error:{ code:"UNSUPPORTED_OP", message:"demo harness" } });
   }

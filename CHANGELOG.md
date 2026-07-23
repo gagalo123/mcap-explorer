@@ -20,7 +20,10 @@ described in [RELEASING.md](RELEASING.md).
   numeric channel — so the right visualization appears without a click; 3D stays
   a manual toggle.
 - Image channels get **video-style playback**: a Play/Pause button auto-advances
-  through frames (Prev/Next still step manually).
+  through frames (Prev/Next still step manually). Playback fetches frames a
+  **window at a time** (one round-trip per ~window, next window prefetched) and
+  plays from memory, instead of a round-trip per frame — much smoother, and the
+  Prev/Next buttons no longer flicker while playing.
 
 ### Added
 

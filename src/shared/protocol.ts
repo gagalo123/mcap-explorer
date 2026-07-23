@@ -1,5 +1,6 @@
 import type {
   ImageFrameDto,
+  ImageFramesDto,
   MessagePageDto,
   MetadataDto,
   SaveAttachmentResultDto,
@@ -59,6 +60,13 @@ export type RequestOp =
       needKeyframe: boolean;
     }
   | { op: "getImageFrame"; channelId: number; target: { logTime: TimeNs; sequence: number } }
+  | {
+      op: "getImageWindow";
+      channelId: number;
+      anchor: { logTime: TimeNs; sequence: number };
+      /** Max frames to return from the anchor forward (also bounded by bytes). */
+      count: number;
+    }
   // Phase 4 — numeric time-series plotting (downsampled server-side):
   | {
       op: "queryTimeSeries";
@@ -84,6 +92,7 @@ export type ResponseBody =
   | { type: "messages"; page: MessagePageDto }
   | { type: "videoFrames"; data: VideoFramesDto }
   | { type: "imageFrame"; data: ImageFrameDto }
+  | { type: "imageFrames"; data: ImageFramesDto }
   | { type: "timeSeries"; data: TimeSeriesDto };
 
 export type HostToWebview =
