@@ -22,6 +22,7 @@ export function MessageBrowser({
   onBack,
   onPreview,
   onPlot,
+  onScene3D,
 }: {
   channel: ChannelDto;
   rpc: RpcClient;
@@ -30,6 +31,8 @@ export function MessageBrowser({
   onPreview?: (anchor: { logTime: string; sequence: number }) => void;
   /** Opens the time-series plot for this channel's numeric fields. */
   onPlot?: () => void;
+  /** Set for pose/tracker channels: opens the 3D scene view. */
+  onScene3D?: () => void;
 }) {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -127,6 +130,11 @@ export function MessageBrowser({
         {onPlot && (
           <button class="plot-btn" onClick={onPlot}>
             📈 Plot
+          </button>
+        )}
+        {onScene3D && (
+          <button class="plot-btn" onClick={onScene3D}>
+            🧊 3D View
           </button>
         )}
       </div>

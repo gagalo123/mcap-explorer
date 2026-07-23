@@ -7,6 +7,18 @@ described in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+
+- Google Safari SDK support: `safari_sdk.protos.Image` channels now get the
+  image **Preview** action (JPEG/PNG decode directly; uncompressed `rgb8`/
+  `rgba8`/`mono8` render as raw), with the codec and dimensions read from the
+  message's `pixel_type`/`cols`/`rows`.
+- **3D View**: channels carrying named poses (`safari_sdk.protos.logging.Trackers`,
+  e.g. hand/upper-body tracking) get a 3D scene view that renders each pose as a
+  point with an optional orientation triad, plus playback and orbit controls. The
+  renderer is schema-agnostic (see `src/shared/pose.ts`); it draws points/frames,
+  not skeleton bones.
+
 ## [0.4.0] — 2026-07-23
 
 Everything since 0.2.0: message browsing, image/video preview, and time-series

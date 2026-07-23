@@ -6,7 +6,7 @@ import type { ChannelDecoder } from "./decoders/types";
 import { McapExplorerError } from "./errors";
 import { classifyFrame, codecStringFor, normalizeCodec } from "./media/annexb";
 import type { VideoCodec } from "./media/annexb";
-import { createMediaExtractor, mediaKindForSchema } from "./media/extract";
+import { createMediaExtractor, isCompressedImageFormat, mediaKindForSchema } from "./media/extract";
 import type { MediaExtractor } from "./media/extract";
 import type {
   AttachmentIndexDto,
@@ -935,8 +935,18 @@ export class McapFileSession {
       throw new McapExplorerError("FRAME_TOO_LARGE", `Image is ${msg.data.byteLength} bytes, above the preview limit.`);
     }
     const media = extractor.extract(msg.data);
+    // Safari images carry the codec in the message, so classify by format;
+    // the other extractors have a fixed compressed/raw kind.
+    const frameKind: "compressed" | "raw" =
+      extractor.kind === "image-raw"
+        ? "raw"
+        : extractor.kind === "image-safari"
+          ? isCompressedImageFormat(media.format)
+            ? "compressed"
+            : "raw"
+          : "compressed";
     return {
-      kind: extractor.kind === "image-raw" ? "raw" : "compressed",
+      kind: frameKind,
       format: media.format,
       width: media.width,
       height: media.height,
