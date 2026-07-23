@@ -9,6 +9,7 @@ export class McapEditorProvider implements vscode.CustomReadonlyEditorProvider<M
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly output: vscode.OutputChannel,
+    private readonly globalStorageUri: vscode.Uri,
   ) {}
 
   static register(
@@ -17,7 +18,7 @@ export class McapEditorProvider implements vscode.CustomReadonlyEditorProvider<M
   ): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
       McapEditorProvider.viewType,
-      new McapEditorProvider(context.extensionUri, output),
+      new McapEditorProvider(context.extensionUri, output, context.globalStorageUri),
       {
         webviewOptions: { retainContextWhenHidden: false },
         supportsMultipleEditorsPerDocument: true,
@@ -39,8 +40,11 @@ export class McapEditorProvider implements vscode.CustomReadonlyEditorProvider<M
     };
     panel.webview.html = this.#renderHtml(panel.webview);
 
-    const host = new RpcHost(panel.webview, document, (message) =>
-      this.output.appendLine(message),
+    const host = new RpcHost(
+      panel.webview,
+      document,
+      (message) => this.output.appendLine(message),
+      this.globalStorageUri,
     );
     panel.onDidDispose(() => host.dispose());
   }

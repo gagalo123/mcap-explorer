@@ -1,8 +1,12 @@
 import type {
+  AttachmentSourceDto,
+  EditSpec,
+  ExportResultDto,
   ImageFrameDto,
   ImageFramesDto,
   MessagePageDto,
   MetadataDto,
+  OpenAttachmentResultDto,
   SaveAttachmentResultDto,
   SchemaSourceDto,
   SummaryDto,
@@ -36,6 +40,7 @@ export type RequestOp =
   | { op: "getSchemaSource"; schemaId: number }
   | { op: "getMetadata"; name: string }
   | { op: "saveAttachment"; attachmentIndex: number }
+  | { op: "openAttachment"; attachmentIndex: number }
   | { op: "scanUnindexed" }
   // Phase 2+ (declared so the contract is stable; host answers UNSUPPORTED_OP until implemented):
   | {
@@ -48,7 +53,6 @@ export type RequestOp =
       limitCount: number;
       limitBytes: number;
     }
-  | { op: "getAttachmentPreview"; attachmentIndex: number }
   // Phase 3 — image/video preview (frame bytes cross as base64, on demand):
   | {
       op: "getFrameWindow";
@@ -75,7 +79,10 @@ export type RequestOp =
       start?: TimeNs;
       end?: TimeNs;
       maxPoints: number;
-    };
+    }
+  // Phase 5 — manual editing (rewrite to a new file; source is never mutated):
+  | { op: "pickAttachmentFile" }
+  | { op: "exportEdited"; spec: EditSpec };
 
 export type WebviewToHost =
   | { kind: "request"; id: number; op: RequestOp }
@@ -89,11 +96,14 @@ export type ResponseBody =
   | { type: "schemaSource"; source: SchemaSourceDto }
   | { type: "metadata"; records: MetadataDto[] }
   | { type: "saveAttachment"; result: SaveAttachmentResultDto }
+  | { type: "openAttachment"; result: OpenAttachmentResultDto }
   | { type: "messages"; page: MessagePageDto }
   | { type: "videoFrames"; data: VideoFramesDto }
   | { type: "imageFrame"; data: ImageFrameDto }
   | { type: "imageFrames"; data: ImageFramesDto }
-  | { type: "timeSeries"; data: TimeSeriesDto };
+  | { type: "timeSeries"; data: TimeSeriesDto }
+  | { type: "attachmentSource"; source?: AttachmentSourceDto }
+  | { type: "exportResult"; result: ExportResultDto };
 
 export type HostToWebview =
   | { kind: "init"; summary?: SummaryDto; error?: ErrorDto }

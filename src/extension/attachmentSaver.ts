@@ -1,7 +1,8 @@
-import { open, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 
 import * as vscode from "vscode";
 
+import { streamAttachmentToFile } from "./attachmentIo";
 import { McapExplorerError } from "./errors";
 import type { McapFileSession } from "./readerService";
 import type { SaveAttachmentResultDto } from "../shared/dto";
@@ -27,28 +28,18 @@ export async function saveAttachmentInteractive(
     return { saved: false };
   }
 
-  const out = await open(target.fsPath, "w");
   try {
-    const bytesWritten = await session.extractAttachment(
+    const bytesWritten = await streamAttachmentToFile(
+      session,
       attachmentIndex,
-      async (chunk) => {
-        // FileHandle.write can report a short write; loop until done.
-        let offset = 0;
-        while (offset < chunk.byteLength) {
-          const { bytesWritten: n } = await out.write(chunk, offset);
-          offset += n;
-        }
-      },
+      target.fsPath,
       signal,
     );
     return { saved: true, targetPath: target.fsPath, bytesWritten };
   } catch (err) {
-    await out.close().catch(() => {});
     if (err instanceof McapExplorerError && err.code === "CANCELLED") {
       await unlink(target.fsPath).catch(() => {});
     }
     throw err;
-  } finally {
-    await out.close().catch(() => {});
   }
 }

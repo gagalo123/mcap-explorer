@@ -1,7 +1,11 @@
+import { createHash } from "node:crypto";
+
 import * as vscode from "vscode";
 
+import { openAttachmentInEditor } from "./attachmentOpener";
 import { saveAttachmentInteractive } from "./attachmentSaver";
 import { McapExplorerError, toErrorDto } from "./errors";
+import { exportEditedInteractive, pickAttachmentSource } from "./mcapExporter";
 import type { McapDocument } from "./mcapDocument";
 import type { HostToWebview, RequestOp, ResponseBody, WebviewToHost } from "../shared/protocol";
 
@@ -12,12 +16,22 @@ import type { HostToWebview, RequestOp, ResponseBody, WebviewToHost } from "../s
 export class RpcHost {
   #aborts = new Map<number, AbortController>();
   #subscription: vscode.Disposable;
+  #scratchDir: vscode.Uri;
 
   constructor(
     private readonly webview: vscode.Webview,
     private readonly document: McapDocument,
     private readonly log: (message: string) => void,
+    scratchBase: vscode.Uri,
   ) {
+    // Per-document scratch dir keyed by source path, so attachments from
+    // different files can't collide. attachmentOpener writes "<index>-<name>"
+    // into it and hands the file to VS Code.
+    this.#scratchDir = vscode.Uri.joinPath(
+      scratchBase,
+      "attachments",
+      createHash("sha1").update(document.uri.fsPath).digest("hex").slice(0, 16),
+    );
     this.#subscription = webview.onDidReceiveMessage((msg: WebviewToHost) => {
       void this.#handle(msg);
     });
@@ -92,6 +106,15 @@ export class RpcHost {
         const result = await saveAttachmentInteractive(session, op.attachmentIndex, signal);
         return { type: "saveAttachment", result };
       }
+      case "openAttachment": {
+        const result = await openAttachmentInEditor(
+          session,
+          op.attachmentIndex,
+          this.#scratchDir,
+          signal,
+        );
+        return { type: "openAttachment", result };
+      }
       case "scanUnindexed": {
         await this.#confirmLargeScan();
         const summary = await session.scanUnindexed((progress) => {
@@ -125,10 +148,26 @@ export class RpcHost {
         const data = await session.queryTimeSeries(op, signal);
         return { type: "timeSeries", data };
       }
+      case "pickAttachmentFile": {
+        const source = await pickAttachmentSource();
+        return { type: "attachmentSource", source };
+      }
+      case "exportEdited": {
+        const result = await exportEditedInteractive(
+          session,
+          op.spec,
+          this.document.uri,
+          (written, total) => {
+            this.#post({ kind: "progress", id, loadedBytes: written, totalBytes: total });
+          },
+          signal,
+        );
+        return { type: "exportResult", result };
+      }
       default:
         throw new McapExplorerError(
           "UNSUPPORTED_OP",
-          `Operation "${op.op}" is not implemented yet.`,
+          `Operation "${(op as RequestOp).op}" is not implemented yet.`,
         );
     }
   }

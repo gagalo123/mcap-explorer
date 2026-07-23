@@ -106,6 +106,13 @@ export interface SaveAttachmentResultDto {
   bytesWritten?: number;
 }
 
+export interface OpenAttachmentResultDto {
+  opened: boolean;
+  /** Path of the scratch file opened in the editor. */
+  targetPath?: string;
+  bytesWritten?: number;
+}
+
 /**
  * JSON-safe decoded message tree (Phase 2+). Binary leaves are replaced by a
  * bytes node so raw payloads never cross the bridge.
@@ -185,6 +192,52 @@ export interface TimeSeriesDto {
   sampled: number;
   /** True when a hard scan cap was hit before the range end. */
   reachedCap: boolean;
+}
+
+// ---- Editing / export (Phase 5) ------------------------------------------
+
+/**
+ * A declarative description of the edits to apply while rewriting an MCAP to a
+ * new file. Everything here is JSON-safe (times are decimal-string ns). The
+ * host reads the source and re-emits it through McapWriter honoring this spec;
+ * the source file is never mutated.
+ */
+export interface EditSpec {
+  /** Channel topics to remove entirely (all their messages are dropped). */
+  dropTopics: string[];
+  /** old topic → new topic; applied to surviving channels. */
+  renameTopics: Record<string, string>;
+  /** Inclusive time crop; omit to keep the full range. */
+  timeRange?: { start: TimeNs; end: TimeNs };
+  metadata: {
+    /** Metadata record names to drop (removes every record with that name). */
+    remove: string[];
+    /** Add, or replace by name, these metadata records. */
+    upsert: { name: string; entries: Record<string, string> }[];
+  };
+  attachments: {
+    /** Source attachment-list indexes to drop (see AttachmentIndexDto.index). */
+    removeIndexes: number[];
+    /** Rename an existing attachment identified by its source index. */
+    rename: { index: number; name: string }[];
+    /** New attachments read from local files on the host. */
+    add: { sourcePath: string; name: string; mediaType: string }[];
+  };
+}
+
+/** A local file the user picked to add as an attachment (resolved host-side). */
+export interface AttachmentSourceDto {
+  path: string;
+  name: string;
+  mediaType: string;
+  /** uint64 as decimal string. */
+  dataSize: string;
+}
+
+export interface ExportResultDto {
+  saved: boolean;
+  targetPath?: string;
+  bytesWritten?: number;
 }
 
 /** One image message decoded to a renderable form (Phase 3). */

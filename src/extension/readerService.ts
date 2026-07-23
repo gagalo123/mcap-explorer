@@ -1,5 +1,7 @@
-import { hasMcapPrefix, McapIndexedReader, McapStreamReader, Opcode } from "@mcap/core";
-import type { DecompressHandlers, IReadable, TypedMcapRecords } from "@mcap/core";
+import { readFile } from "node:fs/promises";
+
+import { hasMcapPrefix, McapIndexedReader, McapStreamReader, McapWriter, Opcode } from "@mcap/core";
+import type { DecompressHandlers, IReadable, IWritable, TypedMcapRecords } from "@mcap/core";
 
 import { DecoderRegistry } from "./decoders/registry";
 import type { ChannelDecoder } from "./decoders/types";
@@ -13,6 +15,7 @@ import type {
   ChannelDto,
   ChunksDto,
   DecodedValue,
+  EditSpec,
   ImageFrameDto,
   ImageFramesDto,
   MessageDto,
@@ -90,6 +93,10 @@ const SCHEMA_TEXT_LIMIT = 256 * 1024;
 const SCHEMA_HEX_LIMIT = 4 * 1024;
 const SCAN_METADATA_LIMIT = 10_000;
 const ATTACHMENT_WINDOW_BYTES = 4 * 1024 * 1024;
+/** Chunk target size when rewriting (exporting) an edited file. */
+const EXPORT_CHUNK_SIZE = 4 * 1024 * 1024;
+/** Emit export progress after every N messages written. */
+const EXPORT_PROGRESS_INTERVAL = 2000;
 /** Video preview bounds (Phase 3). */
 const DEFAULT_MAX_FRAME_COUNT = 600;
 const DEFAULT_MAX_KEYFRAME_LOOKBACK = 600;
@@ -419,7 +426,7 @@ export class McapFileSession {
     if (!this.#reader) {
       throw new McapExplorerError(
         "NO_INDEX",
-        "Saving attachments from unindexed files is not supported yet.",
+        "Extracting attachments from unindexed files is not supported yet.",
       );
     }
     const index = this.#reader.attachmentIndexes[attachmentIndex];
@@ -485,6 +492,184 @@ export class McapFileSession {
       written += chunkLen;
     }
     return Number(written);
+  }
+
+  /**
+   * Rewrites the file to `writable`, applying `spec` (drop/rename topics, time
+   * crop, metadata and attachment edits), producing a fresh, fully-indexed
+   * MCAP. The source is read-only and never mutated. Requires an indexed source
+   * — the rewrite iterates the summary indexes rather than scanning.
+   *
+   * Copied and newly-added attachments are held in memory one at a time (the
+   * writer takes whole payloads); very large attachments cost that much RAM.
+   */
+  async exportEdited(
+    spec: EditSpec,
+    writable: IWritable,
+    onProgress?: (written: number, total: number) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const reader = this.#reader;
+    if (!reader) {
+      throw new McapExplorerError(
+        "NO_INDEX",
+        "Editing requires an indexed file. Run a full scan first, then reopen it.",
+      );
+    }
+
+    const dropTopics = new Set(spec.dropTopics);
+    const startTime = spec.timeRange ? fromTimeNs(spec.timeRange.start) : undefined;
+    const endTime = spec.timeRange ? fromTimeNs(spec.timeRange.end) : undefined;
+
+    const writer = new McapWriter({
+      writable,
+      useChunks: true,
+      useStatistics: true,
+      useChunkIndex: true,
+      useMessageIndex: true,
+      useSummaryOffsets: true,
+      useAttachmentIndex: true,
+      useMetadataIndex: true,
+      repeatSchemas: true,
+      repeatChannels: true,
+      chunkSize: EXPORT_CHUNK_SIZE,
+    });
+    await writer.start({ profile: this.#summary.profile, library: this.#summary.library });
+
+    // Mirror schemas/channels lazily as their first message appears, applying
+    // topic renames. schemaId 0 means "no schema".
+    const schemaMap = new Map<number, number>();
+    const channelMap = new Map<number, number>();
+    const mapChannel = async (channelId: number): Promise<number | undefined> => {
+      const existing = channelMap.get(channelId);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const channel = reader.channelsById.get(channelId);
+      if (!channel) {
+        return undefined;
+      }
+      let dstSchemaId = 0;
+      if (channel.schemaId !== 0) {
+        const mapped = schemaMap.get(channel.schemaId);
+        if (mapped !== undefined) {
+          dstSchemaId = mapped;
+        } else {
+          const schema = reader.schemasById.get(channel.schemaId);
+          if (schema) {
+            dstSchemaId = await writer.registerSchema({
+              name: schema.name,
+              encoding: schema.encoding,
+              data: schema.data,
+            });
+            schemaMap.set(channel.schemaId, dstSchemaId);
+          }
+        }
+      }
+      const topic = spec.renameTopics[channel.topic] ?? channel.topic;
+      const dstChannelId = await writer.registerChannel({
+        schemaId: dstSchemaId,
+        topic,
+        messageEncoding: channel.messageEncoding,
+        metadata: new Map(channel.metadata),
+      });
+      channelMap.set(channelId, dstChannelId);
+      return dstChannelId;
+    };
+
+    const total = Number(this.#summary.stats?.messageCount ?? "0");
+    let seen = 0;
+    for await (const msg of reader.readMessages({ startTime, endTime })) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Export cancelled.");
+      }
+      const channel = reader.channelsById.get(msg.channelId);
+      if (channel && dropTopics.has(channel.topic)) {
+        continue;
+      }
+      const dstChannelId = await mapChannel(msg.channelId);
+      if (dstChannelId === undefined) {
+        continue;
+      }
+      await writer.addMessage({
+        channelId: dstChannelId,
+        sequence: msg.sequence,
+        logTime: msg.logTime,
+        publishTime: msg.publishTime,
+        data: msg.data,
+      });
+      seen++;
+      if (onProgress && seen % EXPORT_PROGRESS_INTERVAL === 0) {
+        onProgress(seen, total);
+      }
+    }
+
+    // Metadata: copy survivors, then apply upserts (add-or-replace by name).
+    const removeMetadata = new Set(spec.metadata.remove);
+    const upsertNames = new Set(spec.metadata.upsert.map((m) => m.name));
+    for await (const record of reader.readMetadata()) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Export cancelled.");
+      }
+      if (removeMetadata.has(record.name) || upsertNames.has(record.name)) {
+        continue;
+      }
+      await writer.addMetadata({ name: record.name, metadata: new Map(record.metadata) });
+    }
+    for (const record of spec.metadata.upsert) {
+      await writer.addMetadata({
+        name: record.name,
+        metadata: new Map(Object.entries(record.entries)),
+      });
+    }
+
+    // Attachments: copy survivors (streamed into memory), then add local files.
+    const removeAttachments = new Set(spec.attachments.removeIndexes);
+    const renameByIndex = new Map(spec.attachments.rename.map((r) => [r.index, r.name] as const));
+    for (let i = 0; i < reader.attachmentIndexes.length; i++) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Export cancelled.");
+      }
+      if (removeAttachments.has(i)) {
+        continue;
+      }
+      const index = reader.attachmentIndexes[i];
+      if (!index) {
+        continue;
+      }
+      const parts: Uint8Array[] = [];
+      await this.extractAttachment(
+        i,
+        async (chunk) => {
+          // The readable may reuse its buffer between reads — copy each window.
+          parts.push(chunk.slice());
+        },
+        signal,
+      );
+      await writer.addAttachment({
+        name: renameByIndex.get(i) ?? index.name,
+        logTime: index.logTime,
+        createTime: index.createTime,
+        mediaType: index.mediaType,
+        data: concatBytes(parts),
+      });
+    }
+    for (const add of spec.attachments.add) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Export cancelled.");
+      }
+      const data = await readFile(add.sourcePath);
+      await writer.addAttachment({
+        name: add.name,
+        logTime: 0n,
+        createTime: 0n,
+        mediaType: add.mediaType,
+        data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+      });
+    }
+
+    await writer.end();
+    onProgress?.(seen, total);
   }
 
   /**
@@ -1125,6 +1310,21 @@ function estimateDtoBytes(dto: MessageDto): number {
 /** Base64-encode a byte view (Node Buffer; respects offset/length). */
 function toBase64(data: Uint8Array): string {
   return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64");
+}
+
+/** Concatenate byte chunks into one contiguous Uint8Array. */
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  if (parts.length === 1) {
+    return parts[0]!;
+  }
+  const total = parts.reduce((n, p) => n + p.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
 }
 
 /**

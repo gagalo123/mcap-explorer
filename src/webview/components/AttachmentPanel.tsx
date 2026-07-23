@@ -47,6 +47,23 @@ export function AttachmentPanel({
     }
   };
 
+  const openInEditor = async (attachment: AttachmentIndexDto) => {
+    const key = attachment.index;
+    setStatus((prev) => ({ ...prev, [key]: "Opening…" }));
+    try {
+      const body = await rpc.request({
+        op: "openAttachment",
+        attachmentIndex: attachment.index,
+      });
+      if (body.type === "openAttachment") {
+        setStatus((prev) => ({ ...prev, [key]: body.result.opened ? "Opened" : "" }));
+      }
+    } catch (err) {
+      const message = err instanceof RpcError ? err.message : String(err);
+      setStatus((prev) => ({ ...prev, [key]: `Failed: ${message}` }));
+    }
+  };
+
   return (
     <section>
       <h2>
@@ -72,6 +89,13 @@ export function AttachmentPanel({
                 <td class="num">{formatBytes(Number(attachment.dataSize))}</td>
                 <td>{formatTimestamp(attachment.logTime)}</td>
                 <td>
+                  <button
+                    disabled={!indexed}
+                    title={indexed ? "Open a preview in VS Code" : "Requires an indexed file"}
+                    onClick={() => void openInEditor(attachment)}
+                  >
+                    Open
+                  </button>{" "}
                   <button
                     disabled={!indexed}
                     title={indexed ? "Save attachment to disk" : "Requires an indexed file"}
