@@ -45,3 +45,28 @@ Editor (F5) checks:
 - [ ] Back button returns to the summary; reopening the tab restores the view.
 - [ ] A small ROS 2 (`cdr`) file decodes via the `ros2` decoder.
 - [ ] Light/dark theme legible in the list and tree.
+
+## Image & video preview (Phase 3)
+
+Automated portions verified via `npm run smoke -- <file> <topic>` against the 2.7 GB reference file:
+
+- [x] `/camera/front/image_raw/compressed` (protobuf `foxglove.CompressedVideo`, H.265) →
+  `getFrameWindow` at a keyframe returns `codec=h265`, `codecString` parsed from the real SPS
+  (**`hev1.1.6.L150.80`**), `keyframeIndex=0`, 30 frames, ~1 MB of frame bytes — reading ~5 MB
+  from the 2.7 GB file (index-based, not a scan). Keyframe detection flags the VPS/SPS/IDR frame
+  and treats following `TRAIL` frames as deltas.
+- [x] Frame bytes round-trip through base64 unchanged (`frameWindow.test.ts`).
+
+Editor (F5) checks — **video decode needs a host that supports the codec in hardware**
+(macOS, Windows, or Linux with an Intel VAAPI GPU). On headless/NVIDIA Linux the video path is
+expected to show the "can't decode" degrade panel until Phase 3.5 (WASM) lands.
+
+- [ ] Select a video message → **Preview frame** → the frame renders on the canvas.
+- [ ] Play / pause advances frames; Step ◀ / ▶ moves one frame; the scrub bar seeks by time.
+- [ ] On an unsupported host, the degrade panel appears with the codec string and the
+      "download this frame's bitstream" button works.
+- [ ] Only preview-window bytes are read (watch the output channel / `MeteredReadable`), never
+      the whole file.
+- [ ] A `CompressedImage` (JPEG/PNG) channel renders via **Preview image**; Prev/Next navigate.
+- [ ] A `RawImage` (`rgb8`) channel renders with correct colors and dimensions.
+- [ ] Light/dark theme legible in the preview controls and degrade panel.
