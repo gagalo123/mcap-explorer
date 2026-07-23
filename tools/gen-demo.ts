@@ -264,7 +264,7 @@ function harnessHtml(mockJson: string): string {
     : view === "preview" ? { kind:"preview", channelId:MOCK.camId, anchor:{ logTime:MOCK.image.logTime, sequence:MOCK.image.sequence } }
     : view === "plot" ? { kind:"plot", channelId:MOCK.imuId }
     : { kind:"summary" };
-  let STATE = { v:4, summary:MOCK.summary, view:V };
+  let STATE = { v:5, summary:MOCK.summary, view:V };
   function post(data){ window.dispatchEvent(new MessageEvent("message", { data })); }
   function reply(id, body){ post({ kind:"response", id, ok:true, body }); }
   window.acquireVsCodeApi = () => ({

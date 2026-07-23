@@ -176,6 +176,7 @@ export function App({ rpc }: { rpc: RpcClient }) {
         <MessageBrowser
           channel={channel}
           rpc={rpc}
+          timeRange={summary.timeRange}
           onBack={goToSummary}
           onPreview={channel.preview ? (anchor) => goToPreview(channel.id, anchor) : undefined}
           onPlot={() => goToPlot(channel.id)}

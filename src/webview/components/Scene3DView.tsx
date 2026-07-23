@@ -25,14 +25,12 @@ interface Frame {
  * optional orientation triad) with three.js, and plays through them. It draws
  * no skeleton bones — connectivity is domain-specific and out of scope.
  */
-export function Scene3DView({
+export function ScenePanel({
   channel,
   rpc,
-  onBack,
 }: {
   channel: ChannelDto;
   rpc: RpcClient;
-  onBack: () => void;
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | undefined>(undefined);
@@ -144,16 +142,7 @@ export function Scene3DView({
   const current = framesRef.current[frameIndex];
 
   return (
-    <main class="scene3d-view">
-      <div class="browser-header">
-        <button onClick={onBack}>← Back to messages</button>
-        <span class="mono browser-topic">{channel.topic}</span>
-        <span class="dim">
-          {channel.schemaName}
-          {capped ? ` · first ${MAX_FRAMES} frames` : ""}
-        </span>
-      </div>
-
+    <>
       {status === "empty" && (
         <div class="dim detail-placeholder">
           No renderable poses found in this channel ({channel.schemaName}).
@@ -187,6 +176,7 @@ export function Scene3DView({
           <span class="dim mono">
             {frameIndex + 1}/{total}
             {current ? ` · ${current.poseSet.poses.length} pts · ${formatTimestamp(current.logTime)}` : ""}
+            {capped ? ` · first ${MAX_FRAMES}` : ""}
           </span>
           <label class="scene3d-opt">
             <input type="checkbox" checked={showAxes} onChange={() => setShowAxes((v) => !v)} /> axes
@@ -199,6 +189,28 @@ export function Scene3DView({
       )}
 
       <div ref={hostRef} class="scene3d-host" />
+    </>
+  );
+}
+
+/** Full-screen page wrapper: header with Back + the ScenePanel. */
+export function Scene3DView({
+  channel,
+  rpc,
+  onBack,
+}: {
+  channel: ChannelDto;
+  rpc: RpcClient;
+  onBack: () => void;
+}) {
+  return (
+    <main class="scene3d-view">
+      <div class="browser-header">
+        <button onClick={onBack}>← Back to messages</button>
+        <span class="mono browser-topic">{channel.topic}</span>
+        <span class="dim">{channel.schemaName}</span>
+      </div>
+      <ScenePanel channel={channel} rpc={rpc} />
     </main>
   );
 }

@@ -7,6 +7,14 @@ described in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Preview / plot / 3D now render **inline in a bounded panel** at the top of the
+  message detail pane instead of taking over the whole editor. Image/video
+  preview shows **automatically** and follows the selected message; plot and 3D
+  are light in-panel toggles (they don't query until opened). A **⤢** button
+  expands any of them to the previous full-screen view.
+
 ### Added
 
 - Google Safari SDK support: `safari_sdk.protos.Image` channels now get the

@@ -39,11 +39,13 @@ export function ImageViewer({
     }
   };
 
-  // Initial image at the anchor (or the channel's first message).
+  // Load the anchored image (or the channel's first message). Re-runs when the
+  // selected message changes so the embedded preview follows row selection;
+  // harmless for the full-screen viewer where the anchor is fixed.
   useEffect(() => {
     void load(anchor ?? { logTime: "0", sequence: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel.id]);
+  }, [channel.id, anchor?.logTime, anchor?.sequence]);
 
   // Lazily fetch a navigation index the first time it's needed.
   const ensureIndex = async (): Promise<Array<{ logTime: string; sequence: number }>> => {

@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { ImageViewer } from "./ImageViewer";
 import { JsonTree } from "./JsonTree";
-import type { ChannelDto, DecodedValue, MessageDto } from "../../shared/dto";
+import { PlotPanel } from "./PlotView";
+import { ScenePanel } from "./Scene3DView";
+import { VideoPlayer } from "./VideoPlayer";
+import type { ChannelDto, DecodedValue, MessageDto, TimeRangeDto } from "../../shared/dto";
+import { isPoseSchema } from "../../shared/pose";
 import { formatBytes, formatTimestamp } from "../../shared/time";
 import type { RpcClient } from "../rpcClient";
 import { RpcError } from "../rpcClient";
+
+/** Which visualization is shown in the detail pane's bounded panel. */
+type VizMode = "none" | "image" | "plot" | "scene";
 
 const ROW_H = 26;
 const OVERSCAN = 12;
@@ -19,6 +27,7 @@ const PAGE_BYTES = 1_000_000;
 export function MessageBrowser({
   channel,
   rpc,
+  timeRange,
   onBack,
   onPreview,
   onPlot,
@@ -26,12 +35,13 @@ export function MessageBrowser({
 }: {
   channel: ChannelDto;
   rpc: RpcClient;
+  timeRange?: TimeRangeDto;
   onBack: () => void;
-  /** Set for image/video channels: opens the preview at the given message. */
+  /** Expands the inline image/video preview to the full-screen viewer. */
   onPreview?: (anchor: { logTime: string; sequence: number }) => void;
-  /** Opens the time-series plot for this channel's numeric fields. */
+  /** Expands the inline plot to the full-screen plot view. */
   onPlot?: () => void;
-  /** Set for pose/tracker channels: opens the 3D scene view. */
+  /** Expands the inline 3D scene to the full-screen scene view. */
   onScene3D?: () => void;
 }) {
   const [messages, setMessages] = useState<MessageDto[]>([]);
@@ -40,6 +50,7 @@ export function MessageBrowser({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<number | undefined>(undefined);
+  const [vizMode, setVizMode] = useState<VizMode>(channel.preview ? "image" : "none");
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400);
   const listRef = useRef<HTMLDivElement>(null);
@@ -83,6 +94,7 @@ export function MessageBrowser({
     // Reset when the channel changes and load the first page.
     setMessages([]);
     setSelected(undefined);
+    setVizMode(channel.preview ? "image" : "none");
     setScrollTop(0);
     cursorRef.current = undefined;
     reachedEndRef.current = false;
@@ -117,6 +129,25 @@ export function MessageBrowser({
 
   const selectedMsg = selected !== undefined ? messages[selected] : undefined;
 
+  // Bounded viz panel: image/video auto-follows the selection; plot/3D are
+  // light toggles that mount (and only then query) when chosen.
+  const hasMedia = channel.preview === "image" || channel.preview === "video";
+  const isVideo = channel.preview === "video";
+  const hasPose = isPoseSchema(channel.schemaName);
+  const anchor = selectedMsg
+    ? { logTime: selectedMsg.logTime, sequence: selectedMsg.sequence }
+    : undefined;
+  const toggleMode = (m: VizMode) => setVizMode((cur) => (cur === m ? "none" : m));
+  const expand = () => {
+    if (vizMode === "image") {
+      onPreview?.(anchor ?? { logTime: "0", sequence: 0 });
+    } else if (vizMode === "plot") {
+      onPlot?.();
+    } else if (vizMode === "scene") {
+      onScene3D?.();
+    }
+  };
+
   return (
     <main class="message-browser">
       <div class="browser-header">
@@ -127,16 +158,6 @@ export function MessageBrowser({
           {channel.messageCount ? ` · ${channel.messageCount} msgs` : ""}
           {reachedEnd ? "" : " · scroll for more"}
         </span>
-        {onPlot && (
-          <button class="plot-btn" onClick={onPlot}>
-            📈 Plot
-          </button>
-        )}
-        {onScene3D && (
-          <button class="plot-btn" onClick={onScene3D}>
-            🧊 3D View
-          </button>
-        )}
       </div>
       <div class="browser-split">
         <div ref={listRef} class="message-list" onScroll={onScroll}>
@@ -160,33 +181,79 @@ export function MessageBrowser({
           {error && <div class="error-inline">{error}</div>}
         </div>
         <div class="message-detail">
-          {selectedMsg ? (
-            selectedMsg.decodeError ? (
-              <div class="error-inline">Decode error: {selectedMsg.decodeError}</div>
+          <div class={`viz-panel${vizMode === "none" ? " collapsed" : ""}`}>
+            <div class="viz-toolbar">
+              {hasMedia && (
+                <button
+                  class={`viz-chip${vizMode === "image" ? " active" : ""}`}
+                  onClick={() => toggleMode("image")}
+                >
+                  {isVideo ? "▶ Video" : "🖼 Image"}
+                </button>
+              )}
+              {onPlot && (
+                <button
+                  class={`viz-chip${vizMode === "plot" ? " active" : ""}`}
+                  onClick={() => toggleMode("plot")}
+                >
+                  📈 Plot
+                </button>
+              )}
+              {hasPose && (
+                <button
+                  class={`viz-chip${vizMode === "scene" ? " active" : ""}`}
+                  onClick={() => toggleMode("scene")}
+                >
+                  🧊 3D
+                </button>
+              )}
+              {vizMode !== "none" && (
+                <button class="viz-expand" title="Expand to full screen" onClick={expand}>
+                  ⤢
+                </button>
+              )}
+            </div>
+            {vizMode === "image" && (
+              <div class="viz-body">
+                {isVideo ? (
+                  <VideoPlayer channel={channel} rpc={rpc} anchor={anchor} timeRange={timeRange} />
+                ) : (
+                  <ImageViewer channel={channel} rpc={rpc} anchor={anchor} />
+                )}
+              </div>
+            )}
+            {vizMode === "plot" && (
+              <div class="viz-body">
+                <PlotPanel channel={channel} rpc={rpc} />
+              </div>
+            )}
+            {vizMode === "scene" && (
+              <div class="viz-body">
+                <ScenePanel channel={channel} rpc={rpc} />
+              </div>
+            )}
+          </div>
+          <div class="detail-scroll">
+            {selectedMsg ? (
+              selectedMsg.decodeError ? (
+                <div class="error-inline">Decode error: {selectedMsg.decodeError}</div>
+              ) : (
+                <>
+                  <div class="detail-head">
+                    <span class="dim">
+                      #{selectedMsg.sequence} · {selectedMsg.decoder} ·{" "}
+                      {formatTimestamp(selectedMsg.logTime)}
+                    </span>
+                  </div>
+                  <JsonTree value={selectedMsg.value ?? null} />
+                </>
+              )
             ) : (
-              <>
-                <div class="detail-head">
-                  <span class="dim">
-                    #{selectedMsg.sequence} · {selectedMsg.decoder} ·{" "}
-                    {formatTimestamp(selectedMsg.logTime)}
-                  </span>
-                  {onPreview && (
-                    <button
-                      class="preview-btn"
-                      onClick={() =>
-                        onPreview({ logTime: selectedMsg.logTime, sequence: selectedMsg.sequence })
-                      }
-                    >
-                      {channel.preview === "video" ? "▶ Preview frame" : "🖼 Preview image"}
-                    </button>
-                  )}
-                </div>
-                <JsonTree value={selectedMsg.value ?? null} />
-              </>
-            )
-          ) : (
-            <div class="dim detail-placeholder">Select a message to inspect its decoded fields.</div>
-          )}
+              <div class="dim detail-placeholder">
+                Select a message to inspect its decoded fields.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </main>

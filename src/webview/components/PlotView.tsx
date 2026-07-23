@@ -18,14 +18,12 @@ type Status = "loading" | "empty" | "ready" | "error";
  * and re-queries the server for detail when the user drag-selects a sub-range
  * (server-side downsampling keeps the payload bounded at any zoom).
  */
-export function PlotView({
+export function PlotPanel({
   channel,
   rpc,
-  onBack,
 }: {
   channel: ChannelDto;
   rpc: RpcClient;
-  onBack: () => void;
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | undefined>(undefined);
@@ -188,16 +186,14 @@ export function PlotView({
 
   if (status === "empty") {
     return (
-      <Shell channel={channel} onBack={onBack}>
-        <div class="dim detail-placeholder">
-          No numeric fields to plot in this channel ({channel.schemaName}).
-        </div>
-      </Shell>
+      <div class="dim detail-placeholder">
+        No numeric fields to plot in this channel ({channel.schemaName}).
+      </div>
     );
   }
 
   return (
-    <Shell channel={channel} onBack={onBack}>
+    <>
       <div class="plot-fields">
         {fields.map((path) => (
           <label key={path} class="plot-field">
@@ -217,6 +213,23 @@ export function PlotView({
       </div>
       {error && <div class="error-inline">{error}</div>}
       <div ref={hostRef} class="plot-host" />
+    </>
+  );
+}
+
+/** Full-screen page wrapper: header with Back + the PlotPanel. */
+export function PlotView({
+  channel,
+  rpc,
+  onBack,
+}: {
+  channel: ChannelDto;
+  rpc: RpcClient;
+  onBack: () => void;
+}) {
+  return (
+    <Shell channel={channel} onBack={onBack}>
+      <PlotPanel channel={channel} rpc={rpc} />
     </Shell>
   );
 }
