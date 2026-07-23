@@ -375,6 +375,20 @@ button:disabled {
   font-size: 0.85em;
   line-height: 1.5;
 }
+.json-tree-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.json-tree-btn {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8em;
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.25));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+.json-tree-btn:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.4));
+}
 .json-line {
   white-space: pre-wrap;
   word-break: break-word;
