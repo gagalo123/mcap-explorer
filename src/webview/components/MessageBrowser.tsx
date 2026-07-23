@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import { ImageViewer } from "./ImageViewer";
 import { JsonTree } from "./JsonTree";
@@ -8,6 +8,7 @@ import { VideoPlayer } from "./VideoPlayer";
 import type { ChannelDto, DecodedValue, MessageDto, TimeRangeDto } from "../../shared/dto";
 import { isPoseSchema } from "../../shared/pose";
 import { formatBytes, formatTimestamp } from "../../shared/time";
+import { numericFieldPaths } from "../numericPaths";
 import type { RpcClient } from "../rpcClient";
 import { RpcError } from "../rpcClient";
 
@@ -57,6 +58,9 @@ export function MessageBrowser({
   const loadingRef = useRef(false);
   const cursorRef = useRef<string | undefined>(undefined);
   const reachedEndRef = useRef(false);
+  // True once the user explicitly picks a viz mode, so auto-selection stops
+  // overriding their choice for the current channel.
+  const userPickedRef = useRef(false);
 
   const loadNext = async () => {
     if (loadingRef.current || reachedEndRef.current) {
@@ -95,6 +99,7 @@ export function MessageBrowser({
     setMessages([]);
     setSelected(undefined);
     setVizMode(channel.preview ? "image" : "none");
+    userPickedRef.current = Boolean(channel.preview); // media defaults to image
     setScrollTop(0);
     cursorRef.current = undefined;
     reachedEndRef.current = false;
@@ -129,15 +134,40 @@ export function MessageBrowser({
 
   const selectedMsg = selected !== undefined ? messages[selected] : undefined;
 
-  // Bounded viz panel: image/video auto-follows the selection; plot/3D are
-  // light toggles that mount (and only then query) when chosen.
+  // Detect the channel's viz capabilities. Image/video and 3D are known from
+  // the schema (zero-cost); "plottable" (is this a numeric time series?) is
+  // decided from the first decoded message we already fetched — undefined until
+  // the first page arrives.
   const hasMedia = channel.preview === "image" || channel.preview === "video";
   const isVideo = channel.preview === "video";
   const hasPose = isPoseSchema(channel.schemaName);
+  const firstDecoded = messages.find((m) => m.value !== undefined && !m.decodeError);
+  const plottable = useMemo(
+    () =>
+      firstDecoded?.value !== undefined
+        ? numericFieldPaths(firstDecoded.value).length > 0
+        : undefined,
+    [firstDecoded],
+  );
+  const showVizPanel = hasMedia || hasPose || plottable === true;
+
+  // Auto-select the default viz once capabilities are known: image for media
+  // (set at reset) → plot for a numeric time series → none. 3D stays a manual
+  // chip. Stops once the user picks a mode for this channel.
+  useEffect(() => {
+    if (!userPickedRef.current && plottable === true) {
+      setVizMode("plot");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plottable]);
+
   const anchor = selectedMsg
     ? { logTime: selectedMsg.logTime, sequence: selectedMsg.sequence }
     : undefined;
-  const toggleMode = (m: VizMode) => setVizMode((cur) => (cur === m ? "none" : m));
+  const toggleMode = (m: VizMode) => {
+    userPickedRef.current = true;
+    setVizMode((cur) => (cur === m ? "none" : m));
+  };
   const expand = () => {
     if (vizMode === "image") {
       onPreview?.(anchor ?? { logTime: "0", sequence: 0 });
@@ -181,6 +211,7 @@ export function MessageBrowser({
           {error && <div class="error-inline">{error}</div>}
         </div>
         <div class="message-detail">
+          {showVizPanel && (
           <div class={`viz-panel${vizMode === "none" ? " collapsed" : ""}`}>
             <div class="viz-toolbar">
               {hasMedia && (
@@ -191,7 +222,7 @@ export function MessageBrowser({
                   {isVideo ? "▶ Video" : "🖼 Image"}
                 </button>
               )}
-              {onPlot && (
+              {plottable === true && (
                 <button
                   class={`viz-chip${vizMode === "plot" ? " active" : ""}`}
                   onClick={() => toggleMode("plot")}
@@ -233,6 +264,7 @@ export function MessageBrowser({
               </div>
             )}
           </div>
+          )}
           <div class="detail-scroll">
             {selectedMsg ? (
               selectedMsg.decodeError ? (

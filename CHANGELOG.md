@@ -10,10 +10,17 @@ described in [RELEASING.md](RELEASING.md).
 ### Changed
 
 - Preview / plot / 3D now render **inline in a bounded panel** at the top of the
-  message detail pane instead of taking over the whole editor. Image/video
-  preview shows **automatically** and follows the selected message; plot and 3D
-  are light in-panel toggles (they don't query until opened). A **⤢** button
+  message detail pane instead of taking over the whole editor. A **⤢** button
   expands any of them to the previous full-screen view.
+- The panel now **auto-detects each channel's capabilities** and shows only the
+  relevant options: image/video from the schema; 3D from the schema; and
+  **Plot only when the channel is actually a numeric time series** (decided from
+  the first decoded message, so non-time-series channels no longer offer a plot).
+  The default view is auto-selected — image for media, else the plot for a
+  numeric channel — so the right visualization appears without a click; 3D stays
+  a manual toggle.
+- Image channels get **video-style playback**: a Play/Pause button auto-advances
+  through frames (Prev/Next still step manually).
 
 ### Added
 

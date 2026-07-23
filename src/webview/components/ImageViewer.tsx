@@ -6,6 +6,9 @@ import { formatBytes, formatTimestamp } from "../../shared/time";
 import type { RpcClient } from "../rpcClient";
 import { RpcError } from "../rpcClient";
 
+/** Minimum ms between frames while playing (decode latency usually dominates). */
+const PLAY_MS = 80;
+
 /** Fetches and renders one image message; prev/next walk the channel lazily. */
 export function ImageViewer({
   channel,
@@ -23,6 +26,8 @@ export function ImageViewer({
   // Lazily-built {logTime, sequence} index for prev/next navigation.
   const indexRef = useRef<Array<{ logTime: string; sequence: number }> | undefined>(undefined);
   const [pos, setPos] = useState<number | undefined>(undefined);
+  const [playing, setPlaying] = useState(false);
+  const playingRef = useRef(false);
 
   const load = async (target: { logTime: string; sequence: number }) => {
     setLoading(true);
@@ -43,6 +48,7 @@ export function ImageViewer({
   // selected message changes so the embedded preview follows row selection;
   // harmless for the full-screen viewer where the anchor is fixed.
   useEffect(() => {
+    setPlaying(false); // a new selection or channel stops playback
     void load(anchor ?? { logTime: "0", sequence: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel.id, anchor?.logTime, anchor?.sequence]);
@@ -82,6 +88,48 @@ export function ImageViewer({
     setPos(next);
     await load(list[next]!);
   };
+
+  // Playback: auto-advance through frames like a video. Sequential awaits pace
+  // by decode latency; PLAY_MS adds a floor. Restarts from the first frame if
+  // started at the end. Stops at the last frame or when paused.
+  useEffect(() => {
+    playingRef.current = playing;
+    if (!playing) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const list = await ensureIndex();
+      if (cancelled || list.length === 0) {
+        setPlaying(false);
+        return;
+      }
+      let cur =
+        pos ??
+        (anchor
+          ? Math.max(
+              0,
+              list.findIndex((m) => m.logTime === anchor.logTime && m.sequence === anchor.sequence),
+            )
+          : 0);
+      if (cur >= list.length - 1) {
+        cur = -1;
+      }
+      while (!cancelled && playingRef.current && cur < list.length - 1) {
+        cur += 1;
+        setPos(cur);
+        await load(list[cur]!);
+        await new Promise((r) => setTimeout(r, PLAY_MS));
+      }
+      if (!cancelled) {
+        setPlaying(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing]);
 
   // Draw whenever the frame changes.
   useEffect(() => {
@@ -127,10 +175,25 @@ export function ImageViewer({
   return (
     <div class="preview-body">
       <div class="preview-controls">
-        <button onClick={() => void step(-1)} disabled={loading}>
+        <button
+          onClick={() => {
+            setPlaying(false);
+            void step(-1);
+          }}
+          disabled={loading}
+        >
           ◀ Prev
         </button>
-        <button onClick={() => void step(1)} disabled={loading}>
+        <button onClick={() => setPlaying((p) => !p)} title={playing ? "Pause" : "Play"}>
+          {playing ? "⏸ Pause" : "▶ Play"}
+        </button>
+        <button
+          onClick={() => {
+            setPlaying(false);
+            void step(1);
+          }}
+          disabled={loading}
+        >
           Next ▶
         </button>
         {frame && (
@@ -142,7 +205,7 @@ export function ImageViewer({
         )}
       </div>
       {error && <div class="error-inline">{error}</div>}
-      {loading && !error && <div class="dim">Loading image…</div>}
+      {loading && !error && !playing && <div class="dim">Loading image…</div>}
       <div class="preview-canvas-wrap">
         <canvas ref={canvasRef} class="preview-canvas" />
       </div>
