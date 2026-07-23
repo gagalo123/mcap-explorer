@@ -115,46 +115,62 @@ export function ImageViewer({
     };
 
     void (async () => {
-      const list = await ensureIndex();
-      if (cancelled || list.length === 0) {
-        setPlaying(false);
-        return;
-      }
-      let cur =
-        pos ??
-        (anchor
-          ? Math.max(
-              0,
-              list.findIndex((m) => m.logTime === anchor.logTime && m.sequence === anchor.sequence),
-            )
-          : 0);
-      if (cur >= list.length - 1) {
-        cur = 0; // restart from the beginning when starting at the end
-      }
-      let win = await fetchWindow(list[cur]!);
-      let prefetch: ReturnType<typeof fetchWindow> | null = null;
-      while (!cancelled && playingRef.current && win.frames.length > 0) {
-        for (let i = 0; i < win.frames.length; i++) {
-          if (cancelled || !playingRef.current) {
-            return;
-          }
-          setFrame(win.frames[i]);
-          setPos(cur);
-          cur += 1;
-          // Prefetch the next window a few frames early so playback never stalls.
-          if (i === win.frames.length - 4 && !win.reachedEnd && win.nextAnchor && !prefetch) {
-            prefetch = fetchWindow(win.nextAnchor);
-          }
-          await new Promise((r) => setTimeout(r, PLAY_MS));
+      try {
+        const list = await ensureIndex();
+        if (cancelled || list.length === 0) {
+          return;
         }
-        if (win.reachedEnd || !win.nextAnchor) {
-          break;
+        let cur =
+          pos ??
+          (anchor
+            ? Math.max(
+                0,
+                list.findIndex((m) => m.logTime === anchor.logTime && m.sequence === anchor.sequence),
+              )
+            : 0);
+        if (cur >= list.length - 1) {
+          cur = 0; // restart from the beginning when starting at the end
         }
-        win = await (prefetch ?? fetchWindow(win.nextAnchor));
-        prefetch = null;
-      }
-      if (!cancelled) {
-        setPlaying(false);
+        let win = await fetchWindow(list[cur]!);
+        let prefetch: ReturnType<typeof fetchWindow> | null = null;
+        while (!cancelled && playingRef.current && win.frames.length > 0) {
+          for (let i = 0; i < win.frames.length; i++) {
+            if (cancelled || !playingRef.current) {
+              return;
+            }
+            const f = win.frames[i]!;
+            const canvas = canvasRef.current;
+            if (canvas) {
+              // Draw imperatively (and await the decode) so consecutive frames
+              // never cancel each other's decode the way the [frame] effect would.
+              await renderFrame(canvas, f);
+            }
+            if (cancelled || !playingRef.current) {
+              return;
+            }
+            setFrame(f); // meta only; the [frame] effect skips drawing while playing
+            setPos(cur);
+            cur += 1;
+            // Prefetch the next window a few frames early so playback never stalls.
+            if (i === win.frames.length - 4 && !win.reachedEnd && win.nextAnchor && !prefetch) {
+              prefetch = fetchWindow(win.nextAnchor);
+            }
+            await new Promise((r) => setTimeout(r, PLAY_MS));
+          }
+          if (win.reachedEnd || !win.nextAnchor) {
+            break;
+          }
+          win = await (prefetch ?? fetchWindow(win.nextAnchor));
+          prefetch = null;
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled) {
+          setPlaying(false);
+        }
       }
     })();
     return () => {
@@ -163,40 +179,21 @@ export function ImageViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing]);
 
-  // Draw whenever the frame changes.
+  // Draw when the frame changes — but not during playback, which draws
+  // imperatively so rapid frame changes never cancel each other's decode.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !frame) {
+    if (!canvas || !frame || playingRef.current) {
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const bytes = b64ToBytes(frame.dataBase64);
-        if (frame.kind === "compressed") {
-          const bitmap = await createImageBitmap(
-            new Blob([bytes.buffer as ArrayBuffer], { type: imageMime(frame.format) }),
-          );
-          if (cancelled) {
-            bitmap.close();
-            return;
-          }
-          canvas.width = bitmap.width;
-          canvas.height = bitmap.height;
-          canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
-          bitmap.close();
-        } else {
-          const imageData = rawToRGBA(bytes, frame);
-          if (!imageData) {
-            setError(`Unsupported raw encoding "${frame.format}".`);
-            return;
-          }
-          canvas.width = imageData.width;
-          canvas.height = imageData.height;
-          canvas.getContext("2d")?.putImageData(imageData, 0, 0);
-        }
+        await renderFrame(canvas, frame);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       }
     })();
     return () => {
@@ -212,7 +209,6 @@ export function ImageViewer({
             setPlaying(false);
             void step(-1);
           }}
-          disabled={loading && !playing}
         >
           ◀ Prev
         </button>
@@ -224,7 +220,6 @@ export function ImageViewer({
             setPlaying(false);
             void step(1);
           }}
-          disabled={loading && !playing}
         >
           Next ▶
         </button>
@@ -243,6 +238,28 @@ export function ImageViewer({
       </div>
     </div>
   );
+}
+
+/** Decode one image frame and draw it onto the canvas (compressed or raw). */
+async function renderFrame(canvas: HTMLCanvasElement, frame: ImageFrameDto): Promise<void> {
+  const bytes = b64ToBytes(frame.dataBase64);
+  if (frame.kind === "compressed") {
+    const bitmap = await createImageBitmap(
+      new Blob([bytes.buffer as ArrayBuffer], { type: imageMime(frame.format) }),
+    );
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+  } else {
+    const imageData = rawToRGBA(bytes, frame);
+    if (!imageData) {
+      throw new Error(`Unsupported raw encoding "${frame.format}".`);
+    }
+    canvas.width = imageData.width;
+    canvas.height = imageData.height;
+    canvas.getContext("2d")?.putImageData(imageData, 0, 0);
+  }
 }
 
 /** Approximate decoded byte length of a base64 string. */
