@@ -7,6 +7,8 @@ described in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-23
+
 ### Changed
 
 - Preview / plot / 3D now render **inline in a bounded panel** at the top of the
