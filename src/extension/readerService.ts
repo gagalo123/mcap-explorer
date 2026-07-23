@@ -412,7 +412,7 @@ export class McapFileSession {
     if (!this.#reader) {
       throw new McapExplorerError(
         "NO_INDEX",
-        "Saving attachments from unindexed files is not supported yet.",
+        "Extracting attachments from unindexed files is not supported yet.",
       );
     }
     const index = this.#reader.attachmentIndexes[attachmentIndex];
