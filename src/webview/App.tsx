@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { AttachmentPanel } from "./components/AttachmentPanel";
 import { ChannelTable } from "./components/ChannelTable";
+import { EditPanel } from "./components/EditPanel";
 import { MessageBrowser } from "./components/MessageBrowser";
 import { MetadataPanel } from "./components/MetadataPanel";
 import { PlotView } from "./components/PlotView";
@@ -24,10 +25,11 @@ type View =
   | { kind: "summary" }
   | { kind: "messages"; channelId: number }
   | { kind: "preview"; channelId: number; anchor?: Anchor }
-  | { kind: "plot"; channelId: number };
+  | { kind: "plot"; channelId: number }
+  | { kind: "edit" };
 
 /** Bump when persisted-state shape changes — stale state is discarded. */
-const STATE_VERSION = 4;
+const STATE_VERSION = 5;
 
 interface PersistedState {
   v: number;
@@ -101,6 +103,12 @@ export function App({ rpc }: { rpc: RpcClient }) {
     persist({ view: next });
   };
 
+  const goToEdit = () => {
+    const next: View = { kind: "edit" };
+    setView(next);
+    persist({ view: next });
+  };
+
   const onScanned = (summary: SummaryDto) => {
     setPhase({ kind: "ready", summary });
     persist({ summary });
@@ -150,6 +158,10 @@ export function App({ rpc }: { rpc: RpcClient }) {
     // Channel gone or file not indexed — fall back to summary.
   }
 
+  if (view.kind === "edit" && summary.indexed) {
+    return <EditPanel summary={summary} rpc={rpc} onBack={goToSummary} />;
+  }
+
   if (view.kind === "messages") {
     const channel = summary.channels.find((c) => c.id === view.channelId);
     if (channel && summary.indexed) {
@@ -169,6 +181,19 @@ export function App({ rpc }: { rpc: RpcClient }) {
   return (
     <main>
       <SummaryHeader summary={summary} />
+      <div class="summary-actions">
+        <button
+          disabled={!summary.indexed}
+          title={
+            summary.indexed
+              ? "Edit topics, metadata & attachments, then export a new MCAP"
+              : "Editing requires an indexed file — run a full scan first"
+          }
+          onClick={goToEdit}
+        >
+          ✎ Edit &amp; export…
+        </button>
+      </div>
       {!summary.indexed && !summary.scanned && (
         <ScanBanner summary={summary} rpc={rpc} onScanned={onScanned} />
       )}

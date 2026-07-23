@@ -1,4 +1,7 @@
 import type {
+  AttachmentSourceDto,
+  EditSpec,
+  ExportResultDto,
   ImageFrameDto,
   MessagePageDto,
   MetadataDto,
@@ -67,7 +70,10 @@ export type RequestOp =
       start?: TimeNs;
       end?: TimeNs;
       maxPoints: number;
-    };
+    }
+  // Phase 5 — manual editing (rewrite to a new file; source is never mutated):
+  | { op: "pickAttachmentFile" }
+  | { op: "exportEdited"; spec: EditSpec };
 
 export type WebviewToHost =
   | { kind: "request"; id: number; op: RequestOp }
@@ -84,7 +90,9 @@ export type ResponseBody =
   | { type: "messages"; page: MessagePageDto }
   | { type: "videoFrames"; data: VideoFramesDto }
   | { type: "imageFrame"; data: ImageFrameDto }
-  | { type: "timeSeries"; data: TimeSeriesDto };
+  | { type: "timeSeries"; data: TimeSeriesDto }
+  | { type: "attachmentSource"; source?: AttachmentSourceDto }
+  | { type: "exportResult"; result: ExportResultDto };
 
 export type HostToWebview =
   | { kind: "init"; summary?: SummaryDto; error?: ErrorDto }
