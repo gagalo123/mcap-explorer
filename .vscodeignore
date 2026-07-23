@@ -12,4 +12,10 @@ tsconfig.webview.json
 vitest.config.ts
 **/*.map
 media/*.svg
+media/demo-*.png
+media/README.md
+examples/**
+tools/**
+dist-tools/**
+dist/demo-harness.html
 .gitignore
