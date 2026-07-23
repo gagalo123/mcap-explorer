@@ -106,6 +106,13 @@ export interface SaveAttachmentResultDto {
   bytesWritten?: number;
 }
 
+export interface OpenAttachmentResultDto {
+  opened: boolean;
+  /** Path of the scratch file opened in the editor. */
+  targetPath?: string;
+  bytesWritten?: number;
+}
+
 /**
  * JSON-safe decoded message tree (Phase 2+). Binary leaves are replaced by a
  * bytes node so raw payloads never cross the bridge.
