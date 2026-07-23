@@ -6,6 +6,11 @@ import { formatBytes, formatTimestamp } from "../../shared/time";
 import type { RpcClient } from "../rpcClient";
 import { RpcError } from "../rpcClient";
 
+/** Frames to request per playback window (server also caps by total bytes). */
+const PLAY_WINDOW = 32;
+/** Target ms between frames while playing (decode latency may dominate). */
+const PLAY_MS = 40;
+
 /** Fetches and renders one image message; prev/next walk the channel lazily. */
 export function ImageViewer({
   channel,
@@ -23,6 +28,8 @@ export function ImageViewer({
   // Lazily-built {logTime, sequence} index for prev/next navigation.
   const indexRef = useRef<Array<{ logTime: string; sequence: number }> | undefined>(undefined);
   const [pos, setPos] = useState<number | undefined>(undefined);
+  const [playing, setPlaying] = useState(false);
+  const playingRef = useRef(false);
 
   const load = async (target: { logTime: string; sequence: number }) => {
     setLoading(true);
@@ -39,11 +46,14 @@ export function ImageViewer({
     }
   };
 
-  // Initial image at the anchor (or the channel's first message).
+  // Load the anchored image (or the channel's first message). Re-runs when the
+  // selected message changes so the embedded preview follows row selection;
+  // harmless for the full-screen viewer where the anchor is fixed.
   useEffect(() => {
+    setPlaying(false); // a new selection or channel stops playback
     void load(anchor ?? { logTime: "0", sequence: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel.id]);
+  }, [channel.id, anchor?.logTime, anchor?.sequence]);
 
   // Lazily fetch a navigation index the first time it's needed.
   const ensureIndex = async (): Promise<Array<{ logTime: string; sequence: number }>> => {
@@ -81,40 +91,109 @@ export function ImageViewer({
     await load(list[next]!);
   };
 
-  // Draw whenever the frame changes.
+  // Playback: fetch frames a window at a time (one RPC round-trip per window)
+  // and display them from memory, prefetching the next window before the
+  // current runs out. This replaces the per-frame round-trip that made naive
+  // stepping slow and jittery. Stops at the end.
+  useEffect(() => {
+    playingRef.current = playing;
+    if (!playing) {
+      return;
+    }
+    let cancelled = false;
+
+    const fetchWindow = async (a: { logTime: string; sequence: number }) => {
+      const body = await rpc.request({
+        op: "getImageWindow",
+        channelId: channel.id,
+        anchor: a,
+        count: PLAY_WINDOW,
+      });
+      return body.type === "imageFrames"
+        ? body.data
+        : { frames: [], reachedEnd: true, nextAnchor: undefined };
+    };
+
+    void (async () => {
+      try {
+        const list = await ensureIndex();
+        if (cancelled || list.length === 0) {
+          return;
+        }
+        let cur =
+          pos ??
+          (anchor
+            ? Math.max(
+                0,
+                list.findIndex((m) => m.logTime === anchor.logTime && m.sequence === anchor.sequence),
+              )
+            : 0);
+        if (cur >= list.length - 1) {
+          cur = 0; // restart from the beginning when starting at the end
+        }
+        let win = await fetchWindow(list[cur]!);
+        let prefetch: ReturnType<typeof fetchWindow> | null = null;
+        while (!cancelled && playingRef.current && win.frames.length > 0) {
+          for (let i = 0; i < win.frames.length; i++) {
+            if (cancelled || !playingRef.current) {
+              return;
+            }
+            const f = win.frames[i]!;
+            const canvas = canvasRef.current;
+            if (canvas) {
+              // Draw imperatively (and await the decode) so consecutive frames
+              // never cancel each other's decode the way the [frame] effect would.
+              await renderFrame(canvas, f);
+            }
+            if (cancelled || !playingRef.current) {
+              return;
+            }
+            setFrame(f); // meta only; the [frame] effect skips drawing while playing
+            setPos(cur);
+            cur += 1;
+            // Prefetch the next window a few frames early so playback never stalls.
+            if (i === win.frames.length - 4 && !win.reachedEnd && win.nextAnchor && !prefetch) {
+              prefetch = fetchWindow(win.nextAnchor);
+            }
+            await new Promise((r) => setTimeout(r, PLAY_MS));
+          }
+          if (win.reachedEnd || !win.nextAnchor) {
+            break;
+          }
+          win = await (prefetch ?? fetchWindow(win.nextAnchor));
+          prefetch = null;
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled) {
+          setPlaying(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing]);
+
+  // Draw when the frame changes — but not during playback, which draws
+  // imperatively so rapid frame changes never cancel each other's decode.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !frame) {
+    if (!canvas || !frame || playingRef.current) {
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const bytes = b64ToBytes(frame.dataBase64);
-        if (frame.kind === "compressed") {
-          const bitmap = await createImageBitmap(
-            new Blob([bytes.buffer as ArrayBuffer], { type: imageMime(frame.format) }),
-          );
-          if (cancelled) {
-            bitmap.close();
-            return;
-          }
-          canvas.width = bitmap.width;
-          canvas.height = bitmap.height;
-          canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
-          bitmap.close();
-        } else {
-          const imageData = rawToRGBA(bytes, frame);
-          if (!imageData) {
-            setError(`Unsupported raw encoding "${frame.format}".`);
-            return;
-          }
-          canvas.width = imageData.width;
-          canvas.height = imageData.height;
-          canvas.getContext("2d")?.putImageData(imageData, 0, 0);
-        }
+        await renderFrame(canvas, frame);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       }
     })();
     return () => {
@@ -125,10 +204,23 @@ export function ImageViewer({
   return (
     <div class="preview-body">
       <div class="preview-controls">
-        <button onClick={() => void step(-1)} disabled={loading}>
+        <button
+          onClick={() => {
+            setPlaying(false);
+            void step(-1);
+          }}
+        >
           ◀ Prev
         </button>
-        <button onClick={() => void step(1)} disabled={loading}>
+        <button onClick={() => setPlaying((p) => !p)} title={playing ? "Pause" : "Play"}>
+          {playing ? "⏸ Pause" : "▶ Play"}
+        </button>
+        <button
+          onClick={() => {
+            setPlaying(false);
+            void step(1);
+          }}
+        >
           Next ▶
         </button>
         {frame && (
@@ -140,12 +232,34 @@ export function ImageViewer({
         )}
       </div>
       {error && <div class="error-inline">{error}</div>}
-      {loading && !error && <div class="dim">Loading image…</div>}
+      {loading && !error && !playing && <div class="dim">Loading image…</div>}
       <div class="preview-canvas-wrap">
         <canvas ref={canvasRef} class="preview-canvas" />
       </div>
     </div>
   );
+}
+
+/** Decode one image frame and draw it onto the canvas (compressed or raw). */
+async function renderFrame(canvas: HTMLCanvasElement, frame: ImageFrameDto): Promise<void> {
+  const bytes = b64ToBytes(frame.dataBase64);
+  if (frame.kind === "compressed") {
+    const bitmap = await createImageBitmap(
+      new Blob([bytes.buffer as ArrayBuffer], { type: imageMime(frame.format) }),
+    );
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+  } else {
+    const imageData = rawToRGBA(bytes, frame);
+    if (!imageData) {
+      throw new Error(`Unsupported raw encoding "${frame.format}".`);
+    }
+    canvas.width = imageData.width;
+    canvas.height = imageData.height;
+    canvas.getContext("2d")?.putImageData(imageData, 0, 0);
+  }
 }
 
 /** Approximate decoded byte length of a base64 string. */

@@ -8,10 +8,12 @@ import { MetadataPanel } from "./components/MetadataPanel";
 import { PlotView } from "./components/PlotView";
 import { PreviewView } from "./components/PreviewView";
 import { ScanBanner } from "./components/ScanBanner";
+import { Scene3DView } from "./components/Scene3DView";
 import { SchemaPanel } from "./components/SchemaPanel";
 import { SummaryHeader } from "./components/SummaryHeader";
 import type { RpcClient } from "./rpcClient";
 import type { SummaryDto } from "../shared/dto";
+import { isPoseSchema } from "../shared/pose";
 import type { ErrorDto } from "../shared/protocol";
 
 type Phase =
@@ -26,10 +28,11 @@ type View =
   | { kind: "messages"; channelId: number }
   | { kind: "preview"; channelId: number; anchor?: Anchor }
   | { kind: "plot"; channelId: number }
+  | { kind: "scene3d"; channelId: number }
   | { kind: "edit" };
 
 /** Bump when persisted-state shape changes — stale state is discarded. */
-const STATE_VERSION = 5;
+const STATE_VERSION = 6;
 
 interface PersistedState {
   v: number;
@@ -103,6 +106,12 @@ export function App({ rpc }: { rpc: RpcClient }) {
     persist({ view: next });
   };
 
+  const goToScene3D = (channelId: number) => {
+    const next: View = { kind: "scene3d", channelId };
+    setView(next);
+    persist({ view: next });
+  };
+
   const goToEdit = () => {
     const next: View = { kind: "edit" };
     setView(next);
@@ -158,6 +167,16 @@ export function App({ rpc }: { rpc: RpcClient }) {
     // Channel gone or file not indexed — fall back to summary.
   }
 
+  if (view.kind === "scene3d") {
+    const channel = summary.channels.find((c) => c.id === view.channelId);
+    if (channel && summary.indexed && isPoseSchema(channel.schemaName)) {
+      return (
+        <Scene3DView channel={channel} rpc={rpc} onBack={() => goToMessages(channel.id)} />
+      );
+    }
+    // Channel gone, not indexed, or not a pose schema — fall back to summary.
+  }
+
   if (view.kind === "edit" && summary.indexed) {
     return <EditPanel summary={summary} rpc={rpc} onBack={goToSummary} />;
   }
@@ -169,9 +188,11 @@ export function App({ rpc }: { rpc: RpcClient }) {
         <MessageBrowser
           channel={channel}
           rpc={rpc}
+          timeRange={summary.timeRange}
           onBack={goToSummary}
           onPreview={channel.preview ? (anchor) => goToPreview(channel.id, anchor) : undefined}
           onPlot={() => goToPlot(channel.id)}
+          onScene3D={isPoseSchema(channel.schemaName) ? () => goToScene3D(channel.id) : undefined}
         />
       );
     }

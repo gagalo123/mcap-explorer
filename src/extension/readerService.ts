@@ -8,7 +8,7 @@ import type { ChannelDecoder } from "./decoders/types";
 import { McapExplorerError } from "./errors";
 import { classifyFrame, codecStringFor, normalizeCodec } from "./media/annexb";
 import type { VideoCodec } from "./media/annexb";
-import { createMediaExtractor, mediaKindForSchema } from "./media/extract";
+import { createMediaExtractor, isCompressedImageFormat, mediaKindForSchema } from "./media/extract";
 import type { MediaExtractor } from "./media/extract";
 import type {
   AttachmentIndexDto,
@@ -17,6 +17,7 @@ import type {
   DecodedValue,
   EditSpec,
   ImageFrameDto,
+  ImageFramesDto,
   MessageDto,
   MessagePageDto,
   MetadataDto,
@@ -68,6 +69,12 @@ export interface FrameWindowOptions {
 export interface ImageFrameOptions {
   channelId: number;
   target: { logTime: TimeNs; sequence: number };
+}
+
+export interface ImageWindowOptions {
+  channelId: number;
+  anchor: { logTime: TimeNs; sequence: number };
+  count: number;
 }
 
 export interface TimeSeriesOptions {
@@ -1119,9 +1126,27 @@ export class McapFileSession {
     if (msg.data.byteLength > DEFAULT_MAX_FRAME_BYTES) {
       throw new McapExplorerError("FRAME_TOO_LARGE", `Image is ${msg.data.byteLength} bytes, above the preview limit.`);
     }
+    return this.#buildImageFrame(extractor, msg);
+  }
+
+  /** Extract one message into an ImageFrameDto (compressed/raw classified). */
+  #buildImageFrame(
+    extractor: MediaExtractor,
+    msg: { data: Uint8Array; sequence: number; logTime: bigint },
+  ): ImageFrameDto {
     const media = extractor.extract(msg.data);
+    // Safari images carry the codec in the message, so classify by format;
+    // the other extractors have a fixed compressed/raw kind.
+    const frameKind: "compressed" | "raw" =
+      extractor.kind === "image-raw"
+        ? "raw"
+        : extractor.kind === "image-safari"
+          ? isCompressedImageFormat(media.format)
+            ? "compressed"
+            : "raw"
+          : "compressed";
     return {
-      kind: extractor.kind === "image-raw" ? "raw" : "compressed",
+      kind: frameKind,
       format: media.format,
       width: media.width,
       height: media.height,
@@ -1130,6 +1155,61 @@ export class McapFileSession {
       logTime: toTimeNs(msg.logTime),
       dataBase64: toBase64(media.payload),
     };
+  }
+
+  /**
+   * Returns a forward run of image frames from the anchor in a single read
+   * pass, shipped in one response — so playback fetches a window at a time
+   * instead of paying an RPC round-trip per frame. Bounded by `count` and
+   * DEFAULT_MAX_FRAME_WINDOW_BYTES; `nextAnchor` continues the next window.
+   */
+  async getImageWindow(opts: ImageWindowOptions, signal?: AbortSignal): Promise<ImageFramesDto> {
+    const reader = this.#reader;
+    if (!reader) {
+      throw new McapExplorerError("NO_INDEX", "Image preview requires an indexed file.");
+    }
+    const channel = reader.channelsById.get(opts.channelId);
+    if (!channel) {
+      throw new McapExplorerError("IO_ERROR", `Channel ${opts.channelId} not found.`);
+    }
+    const extractor = await this.#getMediaExtractor(opts.channelId, channel);
+    if (extractor.kind === "video") {
+      throw new McapExplorerError("NOT_PREVIEWABLE", `Channel ${channel.topic} is video; use the video player.`);
+    }
+    const anchorTime = fromTimeNs(opts.anchor.logTime);
+    const count = Math.max(1, Math.min(opts.count, DEFAULT_MAX_FRAME_COUNT));
+    this.#guardChunkRange(new Set([channel.id]), anchorTime, anchorTime);
+
+    const frames: ImageFrameDto[] = [];
+    let totalBytes = 0;
+    let reachedEnd = true;
+    let nextAnchor: { logTime: TimeNs; sequence: number } | undefined;
+
+    for await (const msg of reader.readMessages({ topics: [channel.topic], startTime: anchorTime })) {
+      if (signal?.aborted) {
+        throw new McapExplorerError("CANCELLED", "Image window query cancelled.");
+      }
+      // Skip frames before the (inclusive) anchor at the anchor timestamp.
+      if (msg.logTime === anchorTime && msg.sequence < opts.anchor.sequence) {
+        continue;
+      }
+      const len = msg.data.byteLength;
+      if (len > DEFAULT_MAX_FRAME_BYTES) {
+        throw new McapExplorerError("FRAME_TOO_LARGE", `Image is ${len} bytes, above the preview limit.`);
+      }
+      if (
+        frames.length >= count ||
+        (frames.length > 0 && totalBytes + len > DEFAULT_MAX_FRAME_WINDOW_BYTES)
+      ) {
+        reachedEnd = false;
+        nextAnchor = { logTime: toTimeNs(msg.logTime), sequence: msg.sequence };
+        break;
+      }
+      frames.push(this.#buildImageFrame(extractor, msg));
+      totalBytes += len;
+    }
+
+    return { frames, reachedEnd, nextAnchor };
   }
 
   async #findKeyframeBefore(

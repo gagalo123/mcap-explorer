@@ -7,6 +7,36 @@ described in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Preview / plot / 3D now render **inline in a bounded panel** at the top of the
+  message detail pane instead of taking over the whole editor. A **⤢** button
+  expands any of them to the previous full-screen view.
+- The panel now **auto-detects each channel's capabilities** and shows only the
+  relevant options: image/video from the schema; 3D from the schema; and
+  **Plot only when the channel is actually a numeric time series** (decided from
+  the first decoded message, so non-time-series channels no longer offer a plot).
+  The default view is auto-selected — image for media, else the plot for a
+  numeric channel — so the right visualization appears without a click; 3D stays
+  a manual toggle.
+- Image channels get **video-style playback**: a Play/Pause button auto-advances
+  through frames (Prev/Next still step manually). Playback fetches frames a
+  **window at a time** (one round-trip per ~window, next window prefetched) and
+  plays from memory, instead of a round-trip per frame — much smoother, and the
+  Prev/Next buttons no longer flicker while playing.
+
+### Added
+
+- Google Safari SDK support: `safari_sdk.protos.Image` channels now get the
+  image **Preview** action (JPEG/PNG decode directly; uncompressed `rgb8`/
+  `rgba8`/`mono8` render as raw), with the codec and dimensions read from the
+  message's `pixel_type`/`cols`/`rows`.
+- **3D View**: channels carrying named poses (`safari_sdk.protos.logging.Trackers`,
+  e.g. hand/upper-body tracking) get a 3D scene view that renders each pose as a
+  point with an optional orientation triad, plus playback and orbit controls. The
+  renderer is schema-agnostic (see `src/shared/pose.ts`); it draws points/frames,
+  not skeleton bones.
+
 ## [0.4.0] — 2026-07-23
 
 Everything since 0.2.0: message browsing, image/video preview, and time-series

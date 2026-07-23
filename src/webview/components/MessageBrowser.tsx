@@ -1,10 +1,19 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
+import { ImageViewer } from "./ImageViewer";
 import { JsonTree } from "./JsonTree";
-import type { ChannelDto, DecodedValue, MessageDto } from "../../shared/dto";
+import { PlotPanel } from "./PlotView";
+import { ScenePanel } from "./Scene3DView";
+import { VideoPlayer } from "./VideoPlayer";
+import type { ChannelDto, DecodedValue, MessageDto, TimeRangeDto } from "../../shared/dto";
+import { isPoseSchema } from "../../shared/pose";
 import { formatBytes, formatTimestamp } from "../../shared/time";
+import { numericFieldPaths } from "../numericPaths";
 import type { RpcClient } from "../rpcClient";
 import { RpcError } from "../rpcClient";
+
+/** Which visualization is shown in the detail pane's bounded panel. */
+type VizMode = "none" | "image" | "plot" | "scene";
 
 const ROW_H = 26;
 const OVERSCAN = 12;
@@ -19,17 +28,22 @@ const PAGE_BYTES = 1_000_000;
 export function MessageBrowser({
   channel,
   rpc,
+  timeRange,
   onBack,
   onPreview,
   onPlot,
+  onScene3D,
 }: {
   channel: ChannelDto;
   rpc: RpcClient;
+  timeRange?: TimeRangeDto;
   onBack: () => void;
-  /** Set for image/video channels: opens the preview at the given message. */
+  /** Expands the inline image/video preview to the full-screen viewer. */
   onPreview?: (anchor: { logTime: string; sequence: number }) => void;
-  /** Opens the time-series plot for this channel's numeric fields. */
+  /** Expands the inline plot to the full-screen plot view. */
   onPlot?: () => void;
+  /** Expands the inline 3D scene to the full-screen scene view. */
+  onScene3D?: () => void;
 }) {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -37,12 +51,16 @@ export function MessageBrowser({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<number | undefined>(undefined);
+  const [vizMode, setVizMode] = useState<VizMode>(channel.preview ? "image" : "none");
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(400);
   const listRef = useRef<HTMLDivElement>(null);
   const loadingRef = useRef(false);
   const cursorRef = useRef<string | undefined>(undefined);
   const reachedEndRef = useRef(false);
+  // True once the user explicitly picks a viz mode, so auto-selection stops
+  // overriding their choice for the current channel.
+  const userPickedRef = useRef(false);
 
   const loadNext = async () => {
     if (loadingRef.current || reachedEndRef.current) {
@@ -80,6 +98,8 @@ export function MessageBrowser({
     // Reset when the channel changes and load the first page.
     setMessages([]);
     setSelected(undefined);
+    setVizMode(channel.preview ? "image" : "none");
+    userPickedRef.current = Boolean(channel.preview); // media defaults to image
     setScrollTop(0);
     cursorRef.current = undefined;
     reachedEndRef.current = false;
@@ -114,6 +134,50 @@ export function MessageBrowser({
 
   const selectedMsg = selected !== undefined ? messages[selected] : undefined;
 
+  // Detect the channel's viz capabilities. Image/video and 3D are known from
+  // the schema (zero-cost); "plottable" (is this a numeric time series?) is
+  // decided from the first decoded message we already fetched — undefined until
+  // the first page arrives.
+  const hasMedia = channel.preview === "image" || channel.preview === "video";
+  const isVideo = channel.preview === "video";
+  const hasPose = isPoseSchema(channel.schemaName);
+  const firstDecoded = messages.find((m) => m.value !== undefined && !m.decodeError);
+  const plottable = useMemo(
+    () =>
+      firstDecoded?.value !== undefined
+        ? numericFieldPaths(firstDecoded.value).length > 0
+        : undefined,
+    [firstDecoded],
+  );
+  const showVizPanel = hasMedia || hasPose || plottable === true;
+
+  // Auto-select the default viz once capabilities are known: image for media
+  // (set at reset) → plot for a numeric time series → none. 3D stays a manual
+  // chip. Stops once the user picks a mode for this channel.
+  useEffect(() => {
+    if (!userPickedRef.current && plottable === true) {
+      setVizMode("plot");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plottable]);
+
+  const anchor = selectedMsg
+    ? { logTime: selectedMsg.logTime, sequence: selectedMsg.sequence }
+    : undefined;
+  const toggleMode = (m: VizMode) => {
+    userPickedRef.current = true;
+    setVizMode((cur) => (cur === m ? "none" : m));
+  };
+  const expand = () => {
+    if (vizMode === "image") {
+      onPreview?.(anchor ?? { logTime: "0", sequence: 0 });
+    } else if (vizMode === "plot") {
+      onPlot?.();
+    } else if (vizMode === "scene") {
+      onScene3D?.();
+    }
+  };
+
   return (
     <main class="message-browser">
       <div class="browser-header">
@@ -124,11 +188,6 @@ export function MessageBrowser({
           {channel.messageCount ? ` · ${channel.messageCount} msgs` : ""}
           {reachedEnd ? "" : " · scroll for more"}
         </span>
-        {onPlot && (
-          <button class="plot-btn" onClick={onPlot}>
-            📈 Plot
-          </button>
-        )}
       </div>
       <div class="browser-split">
         <div ref={listRef} class="message-list" onScroll={onScroll}>
@@ -152,33 +211,81 @@ export function MessageBrowser({
           {error && <div class="error-inline">{error}</div>}
         </div>
         <div class="message-detail">
-          {selectedMsg ? (
-            selectedMsg.decodeError ? (
-              <div class="error-inline">Decode error: {selectedMsg.decodeError}</div>
-            ) : (
-              <>
-                <div class="detail-head">
-                  <span class="dim">
-                    #{selectedMsg.sequence} · {selectedMsg.decoder} ·{" "}
-                    {formatTimestamp(selectedMsg.logTime)}
-                  </span>
-                  {onPreview && (
-                    <button
-                      class="preview-btn"
-                      onClick={() =>
-                        onPreview({ logTime: selectedMsg.logTime, sequence: selectedMsg.sequence })
-                      }
-                    >
-                      {channel.preview === "video" ? "▶ Preview frame" : "🖼 Preview image"}
-                    </button>
-                  )}
-                </div>
-                <JsonTree value={selectedMsg.value ?? null} />
-              </>
-            )
-          ) : (
-            <div class="dim detail-placeholder">Select a message to inspect its decoded fields.</div>
+          {showVizPanel && (
+          <div class={`viz-panel${vizMode === "none" ? " collapsed" : ""}`}>
+            <div class="viz-toolbar">
+              {hasMedia && (
+                <button
+                  class={`viz-chip${vizMode === "image" ? " active" : ""}`}
+                  onClick={() => toggleMode("image")}
+                >
+                  {isVideo ? "▶ Video" : "🖼 Image"}
+                </button>
+              )}
+              {plottable === true && (
+                <button
+                  class={`viz-chip${vizMode === "plot" ? " active" : ""}`}
+                  onClick={() => toggleMode("plot")}
+                >
+                  📈 Plot
+                </button>
+              )}
+              {hasPose && (
+                <button
+                  class={`viz-chip${vizMode === "scene" ? " active" : ""}`}
+                  onClick={() => toggleMode("scene")}
+                >
+                  🧊 3D
+                </button>
+              )}
+              {vizMode !== "none" && (
+                <button class="viz-expand" title="Expand to full screen" onClick={expand}>
+                  ⤢
+                </button>
+              )}
+            </div>
+            {vizMode === "image" && (
+              <div class="viz-body">
+                {isVideo ? (
+                  <VideoPlayer channel={channel} rpc={rpc} anchor={anchor} timeRange={timeRange} />
+                ) : (
+                  <ImageViewer channel={channel} rpc={rpc} anchor={anchor} />
+                )}
+              </div>
+            )}
+            {vizMode === "plot" && (
+              <div class="viz-body">
+                <PlotPanel channel={channel} rpc={rpc} />
+              </div>
+            )}
+            {vizMode === "scene" && (
+              <div class="viz-body">
+                <ScenePanel channel={channel} rpc={rpc} />
+              </div>
+            )}
+          </div>
           )}
+          <div class="detail-scroll">
+            {selectedMsg ? (
+              selectedMsg.decodeError ? (
+                <div class="error-inline">Decode error: {selectedMsg.decodeError}</div>
+              ) : (
+                <>
+                  <div class="detail-head">
+                    <span class="dim">
+                      #{selectedMsg.sequence} · {selectedMsg.decoder} ·{" "}
+                      {formatTimestamp(selectedMsg.logTime)}
+                    </span>
+                  </div>
+                  <JsonTree value={selectedMsg.value ?? null} />
+                </>
+              )
+            ) : (
+              <div class="dim detail-placeholder">
+                Select a message to inspect its decoded fields.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </main>

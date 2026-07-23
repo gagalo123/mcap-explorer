@@ -115,10 +115,12 @@
     "@mcap/support": "^1.1.0",
     "preact": "^10.29.7",
     "protobufjs": "^7.6.5",
+    "three": "^0.185.1",
     "uplot": "^1.6.32"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/three": "^0.185.1",
     "@types/vscode": "1.90.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.28.1",

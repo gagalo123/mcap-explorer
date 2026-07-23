@@ -254,3 +254,15 @@ export interface ImageFrameDto {
   /** Base64 of the compressed image or raw pixel bytes. */
   dataBase64: string;
 }
+
+/**
+ * A forward run of image frames for one channel, read in a single pass and
+ * shipped in one response, so playback fetches a window at a time instead of a
+ * round-trip per frame. Bounded by a frame count and a total-bytes cap;
+ * `nextAnchor` continues the next window.
+ */
+export interface ImageFramesDto {
+  frames: ImageFrameDto[];
+  reachedEnd: boolean;
+  nextAnchor?: { logTime: TimeNs; sequence: number };
+}
