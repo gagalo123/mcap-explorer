@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 import { openAttachmentInEditor } from "./attachmentOpener";
 import { saveAttachmentInteractive } from "./attachmentSaver";
 import { McapExplorerError, toErrorDto } from "./errors";
+import { exportEditedInteractive, pickAttachmentSource } from "./mcapExporter";
 import type { McapDocument } from "./mcapDocument";
 import type { HostToWebview, RequestOp, ResponseBody, WebviewToHost } from "../shared/protocol";
 
@@ -142,6 +143,22 @@ export class RpcHost {
       case "queryTimeSeries": {
         const data = await session.queryTimeSeries(op, signal);
         return { type: "timeSeries", data };
+      }
+      case "pickAttachmentFile": {
+        const source = await pickAttachmentSource();
+        return { type: "attachmentSource", source };
+      }
+      case "exportEdited": {
+        const result = await exportEditedInteractive(
+          session,
+          op.spec,
+          this.document.uri,
+          (written, total) => {
+            this.#post({ kind: "progress", id, loadedBytes: written, totalBytes: total });
+          },
+          signal,
+        );
+        return { type: "exportResult", result };
       }
       default:
         throw new McapExplorerError(

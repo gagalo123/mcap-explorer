@@ -459,3 +459,89 @@ button:disabled {
 .u-legend .u-marker {
   border-radius: 2px;
 }
+
+/* ---- Phase 5: manual editing / export ---- */
+.summary-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0.6rem 0 0.2rem;
+}
+.edit-view {
+  padding-bottom: 3rem;
+}
+.edit-input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.35));
+  border-radius: 2px;
+  padding: 0.15rem 0.4rem;
+  font: inherit;
+  min-width: 10rem;
+}
+.edit-input[type="number"] {
+  min-width: 7rem;
+}
+.edit-input:disabled {
+  opacity: 0.5;
+}
+.edit-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+.edit-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding: 0.2rem 0;
+}
+.edit-card {
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  margin: 0.5rem 0;
+  background: var(--vscode-editorWidget-background, rgba(128, 128, 128, 0.06));
+}
+.edit-card .kv-table {
+  margin-left: 0;
+}
+.edit-small {
+  padding: 0.15rem 0.6rem;
+  font-size: 0.85em;
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.25));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
+.edit-small:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.4));
+}
+.edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+.edit-dropped {
+  text-decoration: line-through;
+  color: var(--vscode-descriptionForeground);
+}
+.edit-export {
+  margin-top: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.edit-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 16rem;
+}
+.edit-progress progress {
+  flex: 1 1 auto;
+}
+.edit-ok {
+  color: var(--vscode-foreground);
+}
