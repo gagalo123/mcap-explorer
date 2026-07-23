@@ -117,6 +117,10 @@ export class RpcHost {
         const data = await session.getImageFrame(op, signal);
         return { type: "imageFrame", data };
       }
+      case "queryTimeSeries": {
+        const data = await session.queryTimeSeries(op, signal);
+        return { type: "timeSeries", data };
+      }
       default:
         throw new McapExplorerError(
           "UNSUPPORTED_OP",

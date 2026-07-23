@@ -21,12 +21,15 @@ export function MessageBrowser({
   rpc,
   onBack,
   onPreview,
+  onPlot,
 }: {
   channel: ChannelDto;
   rpc: RpcClient;
   onBack: () => void;
   /** Set for image/video channels: opens the preview at the given message. */
   onPreview?: (anchor: { logTime: string; sequence: number }) => void;
+  /** Opens the time-series plot for this channel's numeric fields. */
+  onPlot?: () => void;
 }) {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -121,6 +124,11 @@ export function MessageBrowser({
           {channel.messageCount ? ` · ${channel.messageCount} msgs` : ""}
           {reachedEnd ? "" : " · scroll for more"}
         </span>
+        {onPlot && (
+          <button class="plot-btn" onClick={onPlot}>
+            📈 Plot
+          </button>
+        )}
       </div>
       <div class="browser-split">
         <div ref={listRef} class="message-list" onScroll={onScroll}>

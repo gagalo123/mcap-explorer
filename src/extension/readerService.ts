@@ -12,6 +12,7 @@ import type {
   AttachmentIndexDto,
   ChannelDto,
   ChunksDto,
+  DecodedValue,
   ImageFrameDto,
   MessageDto,
   MessagePageDto,
@@ -21,6 +22,7 @@ import type {
   StatsDto,
   SummaryDto,
   TimeRangeDto,
+  TimeSeriesDto,
   VideoFrameDto,
   VideoFramesDto,
 } from "../shared/dto";
@@ -65,6 +67,16 @@ export interface ImageFrameOptions {
   target: { logTime: TimeNs; sequence: number };
 }
 
+export interface TimeSeriesOptions {
+  channelId: number;
+  fields: string[];
+  start?: TimeNs;
+  end?: TimeNs;
+  maxPoints: number;
+  /** Byte budget before chunk-striding kicks in; defaults to MAX_PLOT_SCAN_BYTES. */
+  maxScanBytes?: number;
+}
+
 const SCAN_WINDOW_BYTES = 4 * 1024 * 1024;
 const SCAN_PROGRESS_INTERVAL_BYTES = 64 * 1024 * 1024;
 const SCHEMA_TEXT_LIMIT = 256 * 1024;
@@ -76,6 +88,11 @@ const DEFAULT_MAX_FRAME_COUNT = 600;
 const DEFAULT_MAX_KEYFRAME_LOOKBACK = 600;
 const DEFAULT_MAX_FRAME_WINDOW_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_FRAME_BYTES = 32 * 1024 * 1024;
+/** Time-series sampling bounds (Phase 4). */
+const MAX_TIMESERIES_POINTS = 20000;
+const TIMESERIES_HARD_CAP = 50000;
+/** Max bytes to decompress for one plot query before striding over chunks. */
+const MAX_PLOT_SCAN_BYTES = 256 * 1024 * 1024;
 
 /** Minimum valid MCAP: magic + footer record + trailing magic. */
 const MIN_FILE_SIZE = 8 + 1 + 8 + 20 + 8;
@@ -570,25 +587,7 @@ export class McapFileSession {
       sizeBytes: data.byteLength,
     };
 
-    let decoder = this.#decoderCache.get(channelId);
-    if (!decoder) {
-      const channelInfo = {
-        id: channelId,
-        topic: base.topic,
-        messageEncoding: channel?.messageEncoding ?? "",
-      };
-      const schemaRecord = channel ? reader.schemasById.get(channel.schemaId) : undefined;
-      const schemaInfo = schemaRecord
-        ? {
-            id: schemaRecord.id,
-            name: schemaRecord.name,
-            encoding: schemaRecord.encoding,
-            data: schemaRecord.data,
-          }
-        : undefined;
-      decoder = await this.#registry.resolve(channelInfo, schemaInfo);
-      this.#decoderCache.set(channelId, decoder);
-    }
+    const decoder = await this.#getDecoder(channelId);
 
     try {
       return { ...base, decoder: decoder.id, value: decoder.decode(data) };
@@ -599,6 +598,169 @@ export class McapFileSession {
         decodeError: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /** Resolves (and caches) the decoder for a channel via the registry. */
+  async #getDecoder(channelId: number): Promise<ChannelDecoder> {
+    const cached = this.#decoderCache.get(channelId);
+    if (cached) {
+      return cached;
+    }
+    const reader = this.#reader!;
+    const channel = reader.channelsById.get(channelId);
+    const channelInfo = {
+      id: channelId,
+      topic: channel?.topic ?? `(channel ${channelId})`,
+      messageEncoding: channel?.messageEncoding ?? "",
+    };
+    const schemaRecord = channel ? reader.schemasById.get(channel.schemaId) : undefined;
+    const schemaInfo = schemaRecord
+      ? {
+          id: schemaRecord.id,
+          name: schemaRecord.name,
+          encoding: schemaRecord.encoding,
+          data: schemaRecord.data,
+        }
+      : undefined;
+    const decoder = await this.#registry.resolve(channelInfo, schemaInfo);
+    this.#decoderCache.set(channelId, decoder);
+    return decoder;
+  }
+
+  /**
+   * Downsampled numeric series for a channel. To stay cheap regardless of a
+   * topic's frequency, only ~maxPoints messages are decoded: the reader
+   * iterates the range but a message is decoded only when its logTime crosses
+   * the next time-bucket edge. Requires an indexed file.
+   */
+  async queryTimeSeries(opts: TimeSeriesOptions, signal?: AbortSignal): Promise<TimeSeriesDto> {
+    const reader = this.#reader;
+    if (!reader) {
+      throw new McapExplorerError("NO_INDEX", "Time-series plotting requires an indexed file.");
+    }
+    const channel = reader.channelsById.get(opts.channelId);
+    if (!channel) {
+      throw new McapExplorerError("IO_ERROR", `Channel ${opts.channelId} not found.`);
+    }
+
+    const bounds = this.#channelTimeBounds(channel.id);
+    let startNs = opts.start !== undefined ? fromTimeNs(opts.start) : (bounds?.min ?? 0n);
+    let endNs = opts.end !== undefined ? fromTimeNs(opts.end) : (bounds?.max ?? startNs);
+    if (endNs < startNs) {
+      endNs = startNs;
+    }
+
+    this.#guardChunkRange(new Set([channel.id]), startNs, endNs);
+
+    const maxPoints = Math.max(1, Math.min(opts.maxPoints, MAX_TIMESERIES_POINTS));
+    const span = endNs - startNs;
+    const bucketNs = span > 0n ? span / BigInt(maxPoints) : 0n;
+    const decoder = await this.#getDecoder(channel.id);
+
+    const fields = opts.fields;
+    const t: number[] = [];
+    const values: (number | null)[][] = fields.map(() => []);
+    let sampled = 0;
+    let nextEdge = startNs;
+
+    // Decode one representative message per time bucket (bounds decode cost).
+    const take = (msg: TypedMcapRecords["Message"]): void => {
+      let decoded: DecodedValue | undefined;
+      try {
+        decoded = decoder.decode(msg.data);
+      } catch {
+        decoded = undefined; // decode failure → null sample (gap)
+      }
+      t.push(Number(msg.logTime - startNs) / 1e9);
+      for (let fi = 0; fi < fields.length; fi++) {
+        values[fi]!.push(decoded === undefined ? null : extractNumericAtPath(decoded, fields[fi]!));
+      }
+      sampled += 1;
+      if (bucketNs > 0n) {
+        nextEdge = startNs + ((msg.logTime - startNs) / bucketNs + 1n) * bucketNs;
+      }
+    };
+
+    // Bound bytes decompressed: if the range's chunks exceed the budget, stride
+    // over them so coverage still spans the whole range (gaps between sampled
+    // chunks) while reading ≤ budget — zoom in re-queries a narrower, denser
+    // range. Chunks are shared across topics, so a full-range read of one topic
+    // would otherwise decompress essentially the whole file.
+    const relevant = reader.chunkIndexes
+      .filter(
+        (c) =>
+          c.messageIndexOffsets.has(channel.id) &&
+          c.messageEndTime >= startNs &&
+          c.messageStartTime <= endNs,
+      )
+      .sort((a, b) => (a.messageStartTime < b.messageStartTime ? -1 : 1));
+    let totalBytes = 0n;
+    for (const c of relevant) {
+      totalBytes += c.uncompressedSize;
+    }
+    const budget = BigInt(opts.maxScanBytes ?? MAX_PLOT_SCAN_BYTES);
+    const stride =
+      totalBytes > budget && relevant.length > 0 ? Number((totalBytes + budget - 1n) / budget) : 1;
+    let reachedCap = stride > 1;
+
+    const readRange = async (from: bigint, to: bigint): Promise<boolean> => {
+      for await (const msg of reader.readMessages({ topics: [channel.topic], startTime: from, endTime: to })) {
+        if (signal?.aborted) {
+          throw new McapExplorerError("CANCELLED", "Time-series query cancelled.");
+        }
+        if (bucketNs > 0n && msg.logTime < nextEdge) {
+          continue; // skip within-bucket messages without decoding
+        }
+        take(msg);
+        if (sampled >= TIMESERIES_HARD_CAP) {
+          reachedCap = true;
+          return false;
+        }
+      }
+      return true;
+    };
+
+    if (stride <= 1) {
+      await readRange(startNs, endNs);
+    } else {
+      for (let i = 0; i < relevant.length; i += stride) {
+        const chunk = relevant[i]!;
+        const from = chunk.messageStartTime > startNs ? chunk.messageStartTime : startNs;
+        const to = chunk.messageEndTime < endNs ? chunk.messageEndTime : endNs;
+        if (!(await readRange(from, to))) {
+          break;
+        }
+      }
+    }
+
+    return { startNs: toTimeNs(startNs), fields, t, values, sampled, reachedCap };
+  }
+
+  /** Min/max logTime across chunks that contain a channel (default plot range). */
+  #channelTimeBounds(channelId: number): { min: bigint; max: bigint } | undefined {
+    const reader = this.#reader;
+    if (!reader) {
+      return undefined;
+    }
+    let min: bigint | undefined;
+    let max: bigint | undefined;
+    for (const chunk of reader.chunkIndexes) {
+      if (!chunk.messageIndexOffsets.has(channelId)) {
+        continue;
+      }
+      if (min === undefined || chunk.messageStartTime < min) {
+        min = chunk.messageStartTime;
+      }
+      if (max === undefined || chunk.messageEndTime > max) {
+        max = chunk.messageEndTime;
+      }
+    }
+    if (min !== undefined && max !== undefined) {
+      return { min, max };
+    }
+    // Fallback to the file-wide range.
+    const range = this.#summary.timeRange;
+    return range ? { min: fromTimeNs(range.start), max: fromTimeNs(range.end) } : undefined;
   }
 
   /**
@@ -883,6 +1045,45 @@ function estimateDtoBytes(dto: MessageDto): number {
 /** Base64-encode a byte view (Node Buffer; respects offset/length). */
 function toBase64(data: Uint8Array): string {
   return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64");
+}
+
+/**
+ * Walks a dotted path (e.g. "angular_velocity.x", "data.3") into a decoded
+ * value and returns a finite number, or null if the path is missing or the
+ * leaf is not numeric. Numeric strings (int64/uint64 render as strings) parse.
+ */
+export function extractNumericAtPath(value: DecodedValue, path: string): number | null {
+  let cur: DecodedValue = value;
+  const parts = path === "" ? [] : path.split(".");
+  for (const part of parts) {
+    if (cur === null || typeof cur !== "object") {
+      return null;
+    }
+    if (Array.isArray(cur)) {
+      const idx = Number(part);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= cur.length) {
+        return null;
+      }
+      cur = cur[idx]!;
+    } else {
+      if ((cur as { type?: unknown }).type === "bytes") {
+        return null;
+      }
+      const next = (cur as { [k: string]: DecodedValue })[part];
+      if (next === undefined) {
+        return null;
+      }
+      cur = next;
+    }
+  }
+  if (typeof cur === "number") {
+    return Number.isFinite(cur) ? cur : null;
+  }
+  if (typeof cur === "string") {
+    const n = Number(cur);
+    return cur.trim() !== "" && Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 function buildIndexedSummary(reader: McapIndexedReader, opts: SessionOptions): SummaryDto {

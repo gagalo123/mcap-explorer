@@ -32,6 +32,13 @@ described in [RELEASING.md](RELEASING.md).
   - Selected frame bytes cross the bridge on demand as base64 — a bounded,
     user-initiated relaxation of the no-raw-bytes rule; bulk/file data still
     never crosses.
+- Time-series plots: numeric channels get a **📈 Plot** action. Numeric field
+  paths are auto-discovered from a sample message; selected fields are drawn over
+  time in a [uPlot](https://github.com/leeoniya/uPlot) line chart. Drag across
+  the plot to zoom into a range, which re-queries the server for finer detail.
+  Sampling is downsampled server-side (one decode per time bucket) and the bytes
+  decompressed per query are bounded by striding over chunks on very large
+  ranges, so plotting a multi-GB recording stays responsive.
 
 ## [0.2.0]
 
