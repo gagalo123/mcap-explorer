@@ -4,6 +4,28 @@ Explore [MCAP](https://mcap.dev) robotics log files directly in VS Code: open a 
 
 > Status: summary explorer + message browsing + image/video preview + time-series plots.
 
+## Demo
+
+<!-- Screenshots are rendered from examples/demo.mcap via `npm run gen-demo` + a
+     headless render of the webview. The Marketplace renders only absolute HTTPS
+     image URLs, so these point at the repo's raw content on main. -->
+
+**Instant summary of a recording**
+
+![Instant summary](https://raw.githubusercontent.com/gagalo123/mcap-explorer/main/media/demo-summary.png)
+
+**Browse and decode messages (JSON / Protobuf / ROS 1 / ROS 2)**
+
+![Message browsing](https://raw.githubusercontent.com/gagalo123/mcap-explorer/main/media/demo-messages.png)
+
+**Preview image and video frames**
+
+![Image and video preview](https://raw.githubusercontent.com/gagalo123/mcap-explorer/main/media/demo-preview.png)
+
+**Plot numeric fields over time**
+
+![Time-series plot](https://raw.githubusercontent.com/gagalo123/mcap-explorer/main/media/demo-plot.png)
+
 ## Features
 
 - **Instant summary** — opens the index (footer + summary section) only, never scanning message data. A 2.7 GB production recording opens in ~20 ms reading ~400 KiB.

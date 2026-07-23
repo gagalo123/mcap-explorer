@@ -7,6 +7,11 @@ described in [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-23
+
+Everything since 0.2.0: message browsing, image/video preview, and time-series
+plots.
+
 ### Added
 
 - Message browsing: click a channel in the summary to page through its messages
@@ -24,8 +29,9 @@ described in [RELEASING.md](RELEASING.md).
     Keyframe detection and the WebCodecs codec string are parsed host-side from
     the Annex-B bitstream. On hosts that can't decode the codec (notably HEVC on
     headless or NVIDIA-only Linux, where Chromium has no software HEVC decoder) a
-    clear message and a "download this frame" fallback are shown; a WASM software
-    decoder for those hosts is planned (Phase 3.5).
+    clear message and a "download this frame" fallback are shown. (A WASM
+    software HEVC decoder was investigated for those hosts but isn't feasible in
+    a VS Code webview — it has no SharedArrayBuffer for the decoder's threads.)
   - Images: `foxglove.CompressedImage` / `sensor_msgs/CompressedImage`
     (JPEG/PNG via `createImageBitmap`) and `foxglove.RawImage` /
     `sensor_msgs/Image` (`rgb8`/`bgr8`/`mono8` → canvas, honoring row stride).
@@ -39,6 +45,8 @@ described in [RELEASING.md](RELEASING.md).
   Sampling is downsampled server-side (one decode per time bucket) and the bytes
   decompressed per query are bounded by striding over chunks on very large
   ranges, so plotting a multi-GB recording stays responsive.
+- A bundled `examples/demo.mcap` sample and README demo screenshots, generated
+  reproducibly by `npm run gen-demo`.
 
 ## [0.2.0]
 
