@@ -5,6 +5,7 @@ import type {
   SaveAttachmentResultDto,
   SchemaSourceDto,
   SummaryDto,
+  TimeSeriesDto,
   VideoFramesDto,
 } from "./dto";
 import type { TimeNs } from "./time";
@@ -57,7 +58,16 @@ export type RequestOp =
       /** Seek: find the preceding keyframe first. False: continue playback forward. */
       needKeyframe: boolean;
     }
-  | { op: "getImageFrame"; channelId: number; target: { logTime: TimeNs; sequence: number } };
+  | { op: "getImageFrame"; channelId: number; target: { logTime: TimeNs; sequence: number } }
+  // Phase 4 — numeric time-series plotting (downsampled server-side):
+  | {
+      op: "queryTimeSeries";
+      channelId: number;
+      fields: string[];
+      start?: TimeNs;
+      end?: TimeNs;
+      maxPoints: number;
+    };
 
 export type WebviewToHost =
   | { kind: "request"; id: number; op: RequestOp }
@@ -73,7 +83,8 @@ export type ResponseBody =
   | { type: "saveAttachment"; result: SaveAttachmentResultDto }
   | { type: "messages"; page: MessagePageDto }
   | { type: "videoFrames"; data: VideoFramesDto }
-  | { type: "imageFrame"; data: ImageFrameDto };
+  | { type: "imageFrame"; data: ImageFrameDto }
+  | { type: "timeSeries"; data: TimeSeriesDto };
 
 export type HostToWebview =
   | { kind: "init"; summary?: SummaryDto; error?: ErrorDto }

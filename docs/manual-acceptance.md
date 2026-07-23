@@ -70,3 +70,25 @@ expected to show the "can't decode" degrade panel until Phase 3.5 (WASM) lands.
 - [ ] A `CompressedImage` (JPEG/PNG) channel renders via **Preview image**; Prev/Next navigate.
 - [ ] A `RawImage` (`rgb8`) channel renders with correct colors and dimensions.
 - [ ] Light/dark theme legible in the preview controls and degrade panel.
+
+## Time-series plots (Phase 4)
+
+Automated portions verified via `npm run smoke -- <file> <topic>` against the 2.7 GB reference file:
+
+- [x] `/imu/front` (json `sensor_msgs/Imu`, 270k msgs @ 300 Hz) → `queryTimeSeries` returns
+  ≤ `maxPoints` samples spanning the full range (449 points), decoding one message per time bucket.
+- [x] Bytes decompressed are bounded: a full-range query strides over chunks and reads a fraction
+  of the file (**~0.6 GB of 2.7 GB**, vs the whole file without striding), flagging `reachedCap`
+  (coarse); zooming into a sub-range re-queries at full resolution.
+- [x] Time-bucket sampling, chunk-striding, field-path extraction and numeric-path discovery are
+  covered by `timeSeries.test.ts` / `numericPaths.test.ts`.
+
+Editor (F5) checks:
+
+- [ ] Open a numeric channel (e.g. `/imu/front`) → **📈 Plot** → a chart renders; the field picker
+      lists numeric paths and defaults to non-header signal fields.
+- [ ] Ticking `angular_velocity.x/y/z` overlays three series with a legend; unticking removes them.
+- [ ] Drag across the plot to select a range → it re-queries and zooms in (denser); **Reset zoom**
+      returns to the full range.
+- [ ] A channel with no numeric fields shows the "no numeric fields to plot" empty state.
+- [ ] Light/dark theme: axes, grid, legend and series colors are legible in both.

@@ -13,6 +13,7 @@ import { loadDecompressHandlers } from "@mcap/support";
 import { MeteredReadable } from "../../src/extension/meteredReadable";
 import { McapFileSession } from "../../src/extension/readerService";
 import { textSummary } from "../../src/extension/textSummary";
+import { numericFieldPaths } from "../../src/webview/numericPaths";
 
 async function main(): Promise<void> {
   const path = process.argv[2];
@@ -97,6 +98,26 @@ async function main(): Promise<void> {
           `kind=${img.kind} format=${img.format} ${img.width ?? "?"}×${img.height ?? "?"} ` +
           `base64Len=${img.dataBase64.length}\n` +
           `bytes read for image: +${((metered.bytesRead - before2) / 1024).toFixed(1)} KiB`,
+      );
+    }
+
+    // Phase 4: time-series fetch path (bounded time-bucket sampling).
+    const firstValue = page.messages[0]?.value;
+    const allPaths = firstValue !== undefined ? numericFieldPaths(firstValue) : [];
+    // Match PlotView's default: prefer signal fields over header/covariance.
+    const preferred = allPaths.filter(
+      (p) => !/(^|\.)header(\.|$)/.test(p) && !p.includes("covariance"),
+    );
+    const numericPaths = preferred.length > 0 ? preferred : allPaths;
+    if (channel && numericPaths.length > 0) {
+      const fields = numericPaths.slice(0, 3);
+      const before3 = metered.bytesRead;
+      const series = await session.queryTimeSeries({ channelId: channel.id, fields, maxPoints: 2000 });
+      console.log(
+        `\n--- time series for ${topic} (${fields.join(", ")}) ---\n` +
+          `sampled=${series.sampled} points=${series.t.length} reachedCap=${series.reachedCap} ` +
+          `first=${series.values[0]?.[0]} last=${series.values[0]?.at(-1)}\n` +
+          `bytes read for series: +${((metered.bytesRead - before3) / 1024).toFixed(1)} KiB`,
       );
     }
   }

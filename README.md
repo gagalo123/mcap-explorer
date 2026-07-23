@@ -2,7 +2,7 @@
 
 Explore [MCAP](https://mcap.dev) robotics log files directly in VS Code: open a `.mcap` file and instantly see its topics, schemas, statistics, metadata records and attachments — even for multi-GB files, local or over Remote SSH.
 
-> Status: summary explorer + message browsing + image/video preview. Time-series plots are on the roadmap below.
+> Status: summary explorer + message browsing + image/video preview + time-series plots.
 
 ## Features
 
@@ -15,6 +15,7 @@ Explore [MCAP](https://mcap.dev) robotics log files directly in VS Code: open a 
 - **`MCAP: Show Info`** — right-click a `.mcap` file in the explorer for a plain-text summary in the output channel.
 - **Message browsing** — click a channel to page through its messages in a virtualized list and inspect each one as a collapsible JSON tree, decoded from JSON, Protobuf, ROS 1 or ROS 2 (CDR). Binary fields are shown as bytes previews (length + hex), never shipped whole to the UI.
 - **Image & video preview** — preview image and video channels directly. Images (`CompressedImage` JPEG/PNG, `RawImage` rgb8/bgr8/mono8) render everywhere. Video (`CompressedVideo`: H.264/H.265/VP9/AV1) decodes via WebCodecs with keyframe-aligned seeking, play/pause/step and a time scrub. Only the frames you preview cross to the UI (on demand, as base64) — never bulk video. Where the host can't decode a codec in hardware (notably HEVC on headless/NVIDIA Linux), the preview degrades with a clear message and a frame-download fallback.
+- **Time-series plots** — click **📈 Plot** on a channel to chart its numeric fields over time ([uPlot](https://github.com/leeoniya/uPlot)). Fields are auto-discovered from a sample message; drag across the plot to zoom into a range for finer detail. Sampling is downsampled server-side (one decode per time bucket) and the bytes decompressed per query are bounded, so plotting a multi-GB recording stays responsive.
 
 ## Large files & Remote SSH
 
@@ -39,8 +40,8 @@ Safety rails:
 | 1 | Summary explorer (topics/schemas/stats/metadata/attachments) | ✅ |
 | 2 | Message browsing with decoders (json, protobuf, ros1/ros2, cdr) | ✅ |
 | 3 | Image / video frame preview (WebCodecs) + basic playback | ✅ |
-| 3.5 | WASM software video decode (HEVC on headless/NVIDIA Linux) | planned |
-| 4 | Time-series plots for numeric topics | planned |
+| 4 | Time-series plots for numeric topics | ✅ |
+| 3.5 | WASM software HEVC decode for headless/NVIDIA Linux | deferred — no single-threaded HEVC WASM decoder runs in a VS Code webview (no `SharedArrayBuffer`) |
 
 ## Contributing
 

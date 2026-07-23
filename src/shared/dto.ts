@@ -170,6 +170,23 @@ export interface VideoFramesDto {
   totalBytes: number;
 }
 
+/**
+ * Downsampled numeric time series for one channel (Phase 4). `t` is relative
+ * seconds from `startNs` (absolute nanoseconds exceed 2^53, so they can't be a
+ * JS number); each `values[fieldIndex]` aligns with `t`, using null for a
+ * missing / non-numeric sample so the plot shows a gap.
+ */
+export interface TimeSeriesDto {
+  startNs: TimeNs;
+  fields: string[];
+  t: number[];
+  values: (number | null)[][];
+  /** Number of points returned (after time-bucket sampling). */
+  sampled: number;
+  /** True when a hard scan cap was hit before the range end. */
+  reachedCap: boolean;
+}
+
 /** One image message decoded to a renderable form (Phase 3). */
 export interface ImageFrameDto {
   kind: "compressed" | "raw";
